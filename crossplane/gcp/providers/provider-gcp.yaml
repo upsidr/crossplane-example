@@ -1,0 +1,19 @@
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-gcp
+spec:
+  package: xpkg.upbound.io/upbound/provider-gcp:v0.34.0
+  controllerConfigRef:
+    name: gcp-config
+---
+apiVersion: pkg.crossplane.io/v1alpha1
+kind: ControllerConfig
+metadata:
+  name: gcp-config
+spec:
+  args:
+    - --debug
+  podSecurityContext:
+    fsGroup: 2000

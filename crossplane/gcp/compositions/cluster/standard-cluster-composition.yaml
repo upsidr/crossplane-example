@@ -1,0 +1,626 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: xstandardcluster-gcp
+  labels:
+    crossplane.io/xrd: xstandardclusters.gcp.crossplane.upsider.dev
+    provider: GCP
+spec:
+  compositeTypeRef:
+    apiVersion: gcp.crossplane.upsider.dev/v1alpha1
+    kind: XStandardCluster
+  writeConnectionSecretsToNamespace: crossplane-system
+  patchSets:
+    - name: name
+      patches:
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.id
+          toFieldPath: metadata.name
+    - name: prevent-deletion
+      patches:
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.preventDeletion
+          toFieldPath: spec.deletionPolicy
+          transforms:
+            - type: convert
+              convert:
+                toType: string
+            - type: map
+              map:
+                "true": Orphan
+                "false": Delete
+    - name: label-project-id
+      patches:
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.parameters.projectId
+          toFieldPath: metadata.labels[gcp.crossplane.upsider.dev/project-id]
+    - name: provider-config-ref
+      patches:
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.providerConfigRef
+          toFieldPath: spec.providerConfigRef.name
+  resources:
+    - name: cluster
+      base:
+        apiVersion: container.gcp.upbound.io/v1beta1
+        kind: Cluster
+        spec:
+          forProvider:
+            databaseEncryption:
+              - state: ENCRYPTED
+            ipAllocationPolicy:
+              - clusterSecondaryRangeName: pods
+                servicesSecondaryRangeName: services
+            loggingService: logging.googleapis.com/kubernetes
+            maintenancePolicy:
+              - dailyMaintenanceWindow:
+                  - startTime: "17:00"
+            masterAuthorizedNetworksConfig:
+              - cidrBlocks:
+                  # TODO(micnncim): Should allow only restricted IP addresses.
+                  - cidrBlock: 0.0.0.0/0
+                    displayName: Allow all IP addresses for testing.
+                enabled: true
+            monitoringService: monitoring.googleapis.com/kubernetes
+            nodeConfig:
+              - oauthScopes:
+                  - https://www.googleapis.com/auth/compute
+                  - https://www.googleapis.com/auth/devstorage.read_only
+                  - https://www.googleapis.com/auth/logging.write
+                  - https://www.googleapis.com/auth/monitoring
+            privateClusterConfig:
+              - enablePrivateEndpoint: false
+                enablePrivateNodes: true
+            # TODO(micnncim): Revisit configuration.
+            releaseChannel:
+              - channel: RAPID
+            removeDefaultNodePool: true
+            initialNodeCount: 1
+      patches:
+        - type: PatchSet
+          patchSetName: name
+        - type: PatchSet
+          patchSetName: prevent-deletion
+        - type: PatchSet
+          patchSetName: label-project-id
+        - type: PatchSet
+          patchSetName: provider-config-ref
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.parameters.region
+          toFieldPath: spec.forProvider.location
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.parameters.master.minVersion
+          toFieldPath: spec.forProvider.minMasterVersion
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.parameters.networkRef.id
+          toFieldPath: spec.forProvider.networkRef.name
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.parameters.networkRef.id
+          toFieldPath: spec.forProvider.subnetworkRef.name
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.parameters.master.cidr
+          toFieldPath: spec.forProvider.privateClusterConfig[0].masterIpv4CidrBlock
+        - type: CombineFromComposite
+          toFieldPath: spec.forProvider.databaseEncryption[0].keyName
+          combine:
+            variables:
+              - fromFieldPath: spec.parameters.region
+              - fromFieldPath: spec.id
+            strategy: string
+            string:
+              fmt: "projects/project-with-cloud-kms/locations/%[1]s/keyRings/%[2]s/cryptoKeys/%[2]s-db-encrypt"
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.parameters.projectId
+          toFieldPath: spec.forProvider.workloadIdentityConfig[0].workloadPool
+          transforms:
+            - type: string
+              string:
+                fmt: "%s.svc.id.goog"
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.id
+          toFieldPath: spec.writeConnectionSecretToRef.name
+          transforms:
+            - type: string
+              string:
+                fmt: "standard-cluster-%s"
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.writeConnectionSecretToRef.namespace
+          toFieldPath: spec.writeConnectionSecretToRef.namespace
+        - type: ToCompositeFieldPath
+          fromFieldPath: status.atProvider.status
+          toFieldPath: status.clusterStatus
+      # The control plane supplies the 'kubeconfig' connection secret key, which
+      # is required by the XR.
+      connectionDetails:
+        - fromConnectionSecretKey: kubeconfig
+    - name: node-pool
+      base:
+        apiVersion: container.gcp.upbound.io/v1beta1
+        kind: NodePool
+        spec:
+          forProvider:
+            nodeConfig:
+              - imageType: COS_CONTAINERD
+                shieldedInstanceConfig:
+                  - enableIntegrityMonitoring: true
+                    enableSecureBoot: true
+                workloadMetadataConfig:
+                  - mode: GKE_METADATA
+            initialNodeCount: 1
+            management:
+              - autoRepair: true
+                autoUpgrade: true
+            # TODO(micnncim): Revisit configuration.
+            maxPodsPerNode: 64
+            upgradeSettings:
+              - maxSurge: 2
+                maxUnavailable: 0
+      patches:
+        - type: PatchSet
+          patchSetName: name
+        - type: PatchSet
+          patchSetName: prevent-deletion
+        - type: PatchSet
+          patchSetName: label-project-id
+        - type: PatchSet
+          patchSetName: provider-config-ref
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.id
+          toFieldPath: spec.forProvider.clusterRef.name
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.parameters.nodes.minCount
+          toFieldPath: spec.forProvider.autoscaling[0].minNodeCount
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.parameters.nodes.maxCount
+          toFieldPath: spec.forProvider.autoscaling[0].maxNodeCount
+        - type: CombineFromComposite
+          toFieldPath: spec.forProvider.nodeConfig[0].bootDiskKmsKey
+          combine:
+            variables:
+              - fromFieldPath: spec.parameters.region
+              - fromFieldPath: spec.id
+            strategy: string
+            string:
+              fmt: "projects/project-with-cloud-kms/locations/%[1]s/keyRings/%[2]s/cryptoKeys/%[2]s-cmek"
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.parameters.nodes.size
+          toFieldPath: spec.forProvider.nodeConfig[0].machineType
+          transforms:
+            - type: map
+              # TODO(micnncim): Revisit configuration.
+              map:
+                small: n1-standard-4
+                medium: n1-standard-16
+                large: n1-standard-32
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.id
+          toFieldPath: spec.forProvider.nodeConfig[0].serviceAccountRef.name
+        - type: ToCompositeFieldPath
+          fromFieldPath: status.atProvider.status
+          toFieldPath: status.nodePoolStatus
+    # TODO(micnncim): Ideally, we should move this to `ClusterNetwork`.
+    # However, this configuration needs to know the master node's CIDR block and
+    # `ClusterNetwork` doesn't have a way to know it without defining a parameter
+    # for this, which is duplicated.
+    # Ref: https://github.com/crossplane/crossplane/pull/3531
+    - name: firewall
+      base:
+        apiVersion: compute.gcp.upbound.io/v1beta1
+        kind: Firewall
+        spec:
+          forProvider:
+            direction: INGRESS
+            allow:
+              - protocol: tcp
+            logConfig:
+              - metadata: INCLUDE_ALL_METADATA
+      patches:
+        - type: PatchSet
+          patchSetName: name
+        - type: PatchSet
+          patchSetName: prevent-deletion
+        - type: PatchSet
+          patchSetName: label-project-id
+        - type: PatchSet
+          patchSetName: provider-config-ref
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.parameters.networkRef.id
+          toFieldPath: spec.forProvider.networkRef.name
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.parameters.master.firewall.allow.ports
+          toFieldPath: spec.forProvider.allow[0].ports
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.parameters.master.cidr
+          toFieldPath: spec.forProvider.sourceRanges[0]
+    - name: key-ring
+      base:
+        apiVersion: kms.gcp.upbound.io/v1beta1
+        kind: KeyRing
+        spec:
+          forProvider:
+            # Hard-coded for managing the key ring in a single, separated project.
+            project: project-with-cloud-kms
+          providerConfigRef:
+            name: project-with-cloud-kms
+      patches:
+        - type: PatchSet
+          patchSetName: name
+        - type: PatchSet
+          patchSetName: prevent-deletion
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.parameters.region
+          toFieldPath: spec.forProvider.location
+    - name: crypto-key-db-encrypt
+      base:
+        apiVersion: kms.gcp.upbound.io/v1beta1
+        kind: CryptoKey
+        spec:
+          forProvider:
+            # Hard-coded for managing the key in a single, separated project.
+            project: project-with-cloud-kms
+            purpose: ENCRYPT_DECRYPT
+          providerConfigRef:
+            name: project-with-cloud-kms
+      patches:
+        - type: PatchSet
+          patchSetName: prevent-deletion
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.id
+          toFieldPath: metadata.name
+          transforms:
+            - type: string
+              string:
+                fmt: "%s-db-encrypt"
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.id
+          toFieldPath: spec.forProvider.keyRingRef.name
+    - name: crypto-key-cmek
+      base:
+        apiVersion: kms.gcp.upbound.io/v1beta1
+        kind: CryptoKey
+        spec:
+          forProvider:
+            # Hard-coded for managing the key in a single, separated project.
+            project: project-with-cloud-kms
+            purpose: ENCRYPT_DECRYPT
+          # Hard-coded for managing the key in a single, separated project.
+          providerConfigRef:
+            name: project-with-cloud-kms
+      patches:
+        - type: PatchSet
+          patchSetName: prevent-deletion
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.id
+          toFieldPath: metadata.name
+          transforms:
+            - type: string
+              string:
+                fmt: "%s-cmek"
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.id
+          toFieldPath: spec.forProvider.keyRingRef.name
+    - name: service-account
+      base:
+        apiVersion: cloudplatform.gcp.upbound.io/v1beta1
+        kind: ServiceAccount
+        spec:
+          forProvider:
+            description: Service account for the GKE node pool.
+      patches:
+        - type: PatchSet
+          patchSetName: name
+        - type: PatchSet
+          patchSetName: prevent-deletion
+        - type: PatchSet
+          patchSetName: label-project-id
+        - type: PatchSet
+          patchSetName: provider-config-ref
+    - name: project-iam-member-logging-log-writer
+      base:
+        apiVersion: cloudplatform.gcp.upbound.io/v1beta1
+        kind: ProjectIAMMember
+        spec:
+          forProvider:
+            role: roles/logging.logWriter
+      patches:
+        - type: PatchSet
+          patchSetName: prevent-deletion
+        - type: PatchSet
+          patchSetName: label-project-id
+        - type: PatchSet
+          patchSetName: provider-config-ref
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.id
+          toFieldPath: metadata.name
+          transforms:
+            - type: string
+              string:
+                fmt: "%s-logging-log-writer"
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.parameters.projectId
+          toFieldPath: spec.forProvider.project
+        - type: CombineFromComposite
+          toFieldPath: spec.forProvider.member
+          combine:
+            variables:
+              - fromFieldPath: spec.id
+              - fromFieldPath: spec.parameters.projectId
+            strategy: string
+            string:
+              fmt: "serviceAccount:%s@%s.iam.gserviceaccount.com"
+    - name: project-iam-member-monitoring-metric-writer
+      base:
+        apiVersion: cloudplatform.gcp.upbound.io/v1beta1
+        kind: ProjectIAMMember
+        spec:
+          forProvider:
+            role: roles/monitoring.metricWriter
+      patches:
+        - type: PatchSet
+          patchSetName: prevent-deletion
+        - type: PatchSet
+          patchSetName: label-project-id
+        - type: PatchSet
+          patchSetName: provider-config-ref
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.id
+          toFieldPath: metadata.name
+          transforms:
+            - type: string
+              string:
+                fmt: "%s-monitoring-metric-writer"
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.parameters.projectId
+          toFieldPath: spec.forProvider.project
+        - type: CombineFromComposite
+          toFieldPath: spec.forProvider.member
+          combine:
+            variables:
+              - fromFieldPath: spec.id
+              - fromFieldPath: spec.parameters.projectId
+            strategy: string
+            string:
+              fmt: "serviceAccount:%s@%s.iam.gserviceaccount.com"
+    - name: project-iam-member-monitoring-viewer
+      base:
+        apiVersion: cloudplatform.gcp.upbound.io/v1beta1
+        kind: ProjectIAMMember
+        spec:
+          forProvider:
+            role: roles/monitoring.viewer
+      patches:
+        - type: PatchSet
+          patchSetName: prevent-deletion
+        - type: PatchSet
+          patchSetName: label-project-id
+        - type: PatchSet
+          patchSetName: provider-config-ref
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.id
+          toFieldPath: metadata.name
+          transforms:
+            - type: string
+              string:
+                fmt: "%s-monitoring-viewer"
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.parameters.projectId
+          toFieldPath: spec.forProvider.project
+        - type: CombineFromComposite
+          toFieldPath: spec.forProvider.member
+          combine:
+            variables:
+              - fromFieldPath: spec.id
+              - fromFieldPath: spec.parameters.projectId
+            strategy: string
+            string:
+              fmt: "serviceAccount:%s@%s.iam.gserviceaccount.com"
+    - name: project-iam-member-stackdriver-resource-metadata-writer
+      base:
+        apiVersion: cloudplatform.gcp.upbound.io/v1beta1
+        kind: ProjectIAMMember
+        spec:
+          forProvider:
+            role: roles/stackdriver.resourceMetadata.writer
+      patches:
+        - type: PatchSet
+          patchSetName: prevent-deletion
+        - type: PatchSet
+          patchSetName: label-project-id
+        - type: PatchSet
+          patchSetName: provider-config-ref
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.id
+          toFieldPath: metadata.name
+          transforms:
+            - type: string
+              string:
+                fmt: "%s-stackdriver-resource-metadata-writer"
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.parameters.projectId
+          toFieldPath: spec.forProvider.project
+        - type: CombineFromComposite
+          toFieldPath: spec.forProvider.member
+          combine:
+            variables:
+              - fromFieldPath: spec.id
+              - fromFieldPath: spec.parameters.projectId
+            strategy: string
+            string:
+              fmt: "serviceAccount:%s@%s.iam.gserviceaccount.com"
+    - name: project-iam-member-storage-object-viewer
+      base:
+        apiVersion: cloudplatform.gcp.upbound.io/v1beta1
+        kind: ProjectIAMMember
+        spec:
+          forProvider:
+            role: roles/storage.objectViewer
+      patches:
+        - type: PatchSet
+          patchSetName: prevent-deletion
+        - type: PatchSet
+          patchSetName: label-project-id
+        - type: PatchSet
+          patchSetName: provider-config-ref
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.id
+          toFieldPath: metadata.name
+          transforms:
+            - type: string
+              string:
+                fmt: "%s-storage-object-viewer"
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.parameters.projectId
+          toFieldPath: spec.forProvider.project
+        - type: CombineFromComposite
+          toFieldPath: spec.forProvider.member
+          combine:
+            variables:
+              - fromFieldPath: spec.id
+              - fromFieldPath: spec.parameters.projectId
+            strategy: string
+            string:
+              fmt: "serviceAccount:%s@%s.iam.gserviceaccount.com"
+    - name: crypto-key-iam-member-db-encrypt-encrypter-decrypter
+      base:
+        apiVersion: kms.gcp.upbound.io/v1beta1
+        kind: CryptoKeyIAMMember
+        spec:
+          forProvider:
+            role: roles/cloudkms.cryptoKeyEncrypterDecrypter
+          providerConfigRef:
+            name: project-with-cloud-kms
+      patches:
+        - type: PatchSet
+          patchSetName: prevent-deletion
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.id
+          toFieldPath: metadata.name
+          transforms:
+            - type: string
+              string:
+                fmt: "%s-db-encrypt-encrypter-decrypter"
+        - type: CombineFromComposite
+          toFieldPath: spec.forProvider.cryptoKeyId
+          combine:
+            variables:
+              - fromFieldPath: spec.parameters.region
+              - fromFieldPath: spec.id
+            strategy: string
+            string:
+              fmt: "project-with-cloud-kms/%[1]s/%[2]s/%[2]s-db-encrypt"
+        # Ref: https://cloud.google.com/kubernetes-engine/docs/how-to/encrypting-secrets#grant_permission_to_use_the_key
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.parameters.projectNumber
+          toFieldPath: spec.forProvider.member
+          transforms:
+            - type: string
+              string:
+                fmt: "serviceAccount:service-%d@container-engine-robot.iam.gserviceaccount.com"
+    - name: crypto-key-iam-member-cmek-encrypter-decrypter
+      base:
+        apiVersion: kms.gcp.upbound.io/v1beta1
+        kind: CryptoKeyIAMMember
+        spec:
+          forProvider:
+            role: roles/cloudkms.cryptoKeyEncrypterDecrypter
+          providerConfigRef:
+            name: project-with-cloud-kms
+      patches:
+        - type: PatchSet
+          patchSetName: prevent-deletion
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.id
+          toFieldPath: metadata.name
+          transforms:
+            - type: string
+              string:
+                fmt: "%s-cmek-encrypter-decrypter"
+        - type: CombineFromComposite
+          toFieldPath: spec.forProvider.cryptoKeyId
+          combine:
+            variables:
+              - fromFieldPath: spec.parameters.region
+              - fromFieldPath: spec.id
+            strategy: string
+            string:
+              fmt: "project-with-cloud-kms/%[1]s/%[2]s/%[2]s-cmek"
+        # Ref: https://cloud.google.com/kubernetes-engine/docs/how-to/using-cmek#grant_permission
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.parameters.projectNumber
+          toFieldPath: spec.forProvider.member
+          transforms:
+            - type: string
+              string:
+                fmt: "serviceAccount:service-%d@compute-system.iam.gserviceaccount.com"
+    - name: kubernetes-provider-config
+      base:
+        apiVersion: kubernetes.crossplane.io/v1alpha1
+        kind: ProviderConfig
+        spec:
+          credentials:
+            source: Secret
+            secretRef:
+              namespace: crossplane-system
+              key: kubeconfig
+          # GKE requires this for authentication.
+          # Ref: https://github.com/crossplane-contrib/provider-kubernetes/issues/23
+          # TODO(micnncim): Migrate to Workload Identity.
+          identity:
+            type: GoogleApplicationCredentials
+            source: Secret
+            secretRef:
+              name: gcp-creds
+              namespace: crossplane-system
+              key: creds
+      patches:
+        - type: PatchSet
+          patchSetName: name
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.id
+          toFieldPath: spec.credentials.secretRef.name
+          transforms:
+            - type: string
+              string:
+                fmt: "standard-cluster-%s"
+    # Ref: https://cloud.google.com/kubernetes-engine/docs/how-to/using-cmek#create_a_cmek_protected_attached_disk
+    - name: storage-class-cmek
+      base:
+        apiVersion: kubernetes.crossplane.io/v1alpha1
+        kind: Object
+        spec:
+          forProvider:
+            manifest:
+              apiVersion: storage.k8s.io/v1
+              kind: StorageClass
+              metadata:
+                name: csi-gce-pd-cmek
+              provisioner: pd.csi.storage.gke.io
+              volumeBindingMode: WaitForFirstConsumer
+              allowVolumeExpansion: true
+              parameters:
+                type: pd-standard
+      patches:
+        - type: PatchSet
+          patchSetName: prevent-deletion
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.id
+          toFieldPath: metadata.name
+          transforms:
+            - type: string
+              string:
+                fmt: "storage-class-%s"
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.id
+          toFieldPath: spec.providerConfigRef.name
+        - type: FromCompositeFieldPath
+          fromFieldPath: metadata.namespace
+          toFieldPath: spec.forProvider.manifest.metadata.namespace
+        - type: CombineFromComposite
+          toFieldPath: spec.forProvider.manifest.parameters.disk-encryption-kms-key
+          combine:
+            variables:
+              - fromFieldPath: spec.parameters.region
+              - fromFieldPath: spec.id
+            strategy: string
+            string:
+              fmt: "projects/project-with-cloud-kms/locations/%[1]s/keyRings/%[2]s/cryptoKeys/%[2]s-cmek"

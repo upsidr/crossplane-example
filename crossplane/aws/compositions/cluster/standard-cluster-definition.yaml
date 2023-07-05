@@ -1,0 +1,182 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositeResourceDefinition
+metadata:
+  name: xstandardclusters.aws.crossplane.upsider.dev
+spec:
+  group: aws.crossplane.upsider.dev
+  claimNames:
+    kind: StandardCluster
+    plural: standardcluster
+  names:
+    kind: XStandardCluster
+    plural: xstandardclusters
+  connectionSecretKeys:
+    - kubeconfig
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                # This ID is necessary in order to ensure both Claim / XR
+                # usages are supported. When using XR directly, metadata.name
+                # would be sufficient. However, when using Claim, metadata.name
+                # will get some random suffix added, which makes it difficult
+                # to refer to the same object. There are other ways to refer to
+                # the Claim name, but then it won't work when using XR.
+                id:
+                  type: string
+                  description: ID of this cluster for resource name and object reference.
+                parameters:
+                  type: object
+                  description: Cluster configuration parameters.
+                  properties:
+                    region:
+                      type: string
+                      description: Region to deploy this cluster in.
+                    minVersion:
+                      type: string
+                      description: Minimum version of cluster to deploy.
+                    deploymentMode:
+                      type: string
+                      description: Deployment mode, this must be one of production, staging, or dev. Defaults to dev.
+                      enum:
+                        - production
+                        - staging
+                        - dev
+                      default: dev
+                    networkRef:
+                      type: object
+                      description: "A reference to the Network object that this cluster should be connected to."
+                      properties:
+                        id:
+                          type: string
+                          description: ID of the Network object this ref points to.
+                      required:
+                        - id
+                    nodes:
+                      type: object
+                      description: Cluster node configuration parameters.
+                      properties:
+                        # General Purpose
+                        generalPurposeNodes:
+                          type: object
+                          description: General purpose node configurations.
+                          properties:
+                            enable:
+                              type: string
+                              description: When set any data, this enables the node group creation.
+                            minCount:
+                              type: integer
+                              description: Minimum node count.
+                            maxCount:
+                              type: integer
+                              description: Maximum node count.
+                        generalPurposeSpotNodes:
+                          type: object
+                          description: General purpose spot node configurations.
+                          properties:
+                            enable:
+                              type: string
+                              description: When set any data, this enables the node group creation.
+                            minCount:
+                              type: integer
+                              description: Minimum node count.
+                            maxCount:
+                              type: integer
+                              description: Maximum node count.
+
+                        # Low Cost
+                        lowCostNodes:
+                          type: object
+                          description: Low cost node configurations.
+                          properties:
+                            enable:
+                              type: string
+                              description: When set any data, this enables the node group creation.
+                            minCount:
+                              type: integer
+                              description: Minimum node count.
+                            maxCount:
+                              type: integer
+                              description: Maximum node count.
+                        lowCostSpotNodes:
+                          type: object
+                          description: Low cost spot node configurations.
+                          properties:
+                            enable:
+                              type: string
+                              description: When set any data, this enables the node group creation.
+                            minCount:
+                              type: integer
+                              description: Minimum node count.
+                            maxCount:
+                              type: integer
+                              description: Maximum node count.
+
+                        # Specific use cases
+                        highMemoryNodes:
+                          type: object
+                          description: High memory node configurations.
+                          properties:
+                            enable:
+                              type: string
+                              description: When set any data, this enables the node group creation.
+                            minCount:
+                              type: integer
+                              description: Minimum node count.
+                            maxCount:
+                              type: integer
+                              description: Maximum node count.
+                        highCpuNodes:
+                          type: object
+                          description: High CPU node configurations.
+                          properties:
+                            enable:
+                              type: string
+                              description: When set any data, this enables the node group creation.
+                            minCount:
+                              type: integer
+                              description: Minimum node count.
+                            maxCount:
+                              type: integer
+                              description: Maximum node count.
+                  required:
+                    - region
+                    - minVersion
+                    - networkRef
+                    # - nodes # If not specified, it will create empty node pools. It won't be useful, but allowed.
+                providerConfigRef:
+                  type: string
+                  description: ProviderConfig reference to be used.
+                preventDeletion:
+                  type: boolean
+                  default: false
+                  description: When set to true, it prevents deleting the remote resources.
+              required:
+                - id
+                - parameters
+            status:
+              type: object
+              properties:
+                controlPlaneStatus:
+                  description: The status of the cluster control plane.
+                  type: string
+                nodePoolStatus:
+                  description: The status of the node pool.
+                  type: string
+                oidcIssuer:
+                  type: string
+                  description: OIDC Issuer URL.
+      additionalPrinterColumns:
+        - name: controlPlane
+          type: string
+          jsonPath: ".status.controlPlaneStatus"
+        - name: nodePool
+          type: string
+          jsonPath: ".status.nodePoolStatus"

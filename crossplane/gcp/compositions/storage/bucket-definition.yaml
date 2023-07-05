@@ -1,0 +1,78 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositeResourceDefinition
+metadata:
+  name: xbuckets.gcp.crossplane.upsider.dev
+spec:
+  group: gcp.crossplane.upsider.dev
+  claimNames:
+    kind: Bucket
+    plural: buckets
+  names:
+    kind: XBucket
+    plural: xbuckets
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                # This ID is necessary in order to ensure both Claim / XR
+                # usages are supported. When using XR directly, metadata.name
+                # would be sufficient. However, when using Claim, metadata.name
+                # will get some random suffix added, which makes it difficult
+                # to refer to the same object. There are other ways to refer to
+                # the Claim name, but then it won't work when using XR.
+                #
+                # This will be used for most of managed resources and external names.
+                # Make sure the value of this field is valid for GCP resources to be generated.
+                id:
+                  type: string
+                  description: ID of this bucket for resource name and object reference.
+                  minLength: 4
+                  maxLength: 63
+                parameters:
+                  type: object
+                  description: Storage configuration parameters.
+                  properties:
+                    class:
+                      type: string
+                      description: Storage class of this bucket.
+                      enum:
+                        - coldline
+                        - multi_regional
+                        - nearline
+                        - regional
+                        - standard
+                      default: standard
+                    location:
+                      type: string
+                      description: Region where this bucket exists.
+                      enum:
+                        - asia
+                      default: asia
+                  default: {}
+                providerConfigRef:
+                  type: string
+                  description: ProviderConfig reference to be used.
+                preventDeletion:
+                  type: boolean
+                  description: When set to true, it prevents deleting the remote resources.
+                  default: false
+              required:
+                - id
+                - providerConfigRef
+            status:
+              type: object
+              properties:
+                bucketName:
+                  description: The actual name of the bucket.
+                  type: string
+      additionalPrinterColumns:
+        - name: bucket-name
+          type: string
+          jsonPath: .status.bucketName

@@ -1,0 +1,506 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: standard-bucket-composition-aws
+  labels:
+    crossplane.io/xrd: xstandardbuckets.crossplane.upsider.dev
+    provider: AWS
+spec:
+  compositeTypeRef:
+    apiVersion: crossplane.upsider.dev/v1alpha1
+    kind: XStandardBucket
+  writeConnectionSecretsToNamespace: crossplane-system
+  patchSets:
+    - name: preventDeletion
+      patches:
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.preventDeletion
+          toFieldPath: spec.deletionPolicy
+          transforms:
+            - type: convert
+              convert:
+                toType: string
+            - type: map
+              map:
+                "true": Orphan
+                "false": Delete
+  resources:
+    - name: bucket
+      base:
+        apiVersion: s3.aws.crossplane.io/v1beta1
+        kind: Bucket
+        metadata:
+          name: unknown # To be overridden
+        spec:
+          forProvider:
+            acl: private
+            locationConstraint: unknown # To be overridden
+            lifecycleConfiguration:
+              rules:
+                - status: Enabled
+                  expiration:
+                    days: 4015 # 11 years. Our company policy is to keep data for 11 years.
+                  transitions:
+                    - storageClass: STANDARD_IA
+                      days: 60
+                    - storageClass: GLACIER
+                      days: 270
+            publicAccessBlockConfiguration:
+              blockPublicAcls: true
+              blockPublicPolicy: true
+              ignorePublicAcls: true
+              restrictPublicBuckets: true
+
+      patches:
+        - type: PatchSet
+          patchSetName: preventDeletion
+
+        - fromFieldPath: spec.id
+          toFieldPath: metadata.annotations[crossplane.io/external-name]
+
+        - fromFieldPath: spec.providerConfigRef
+          toFieldPath: spec.providerConfigRef.name
+
+        - fromFieldPath: metadata.name
+          toFieldPath: metadata.name
+
+        - fromFieldPath: spec.region
+          toFieldPath: spec.forProvider.locationConstraint
+
+        - fromFieldPath: spec.objectLockEnabledForBucket
+          toFieldPath: spec.forProvider.objectLockEnabledForBucket
+    - name: read-only-role-for-bucket
+      base:
+        apiVersion: iam.aws.crossplane.io/v1beta1
+        kind: Role
+        metadata:
+          name: unknown # To be overridden
+        spec:
+          forProvider:
+            assumeRolePolicyDocument: | # To be overridden
+      patches:
+        - fromFieldPath: metadata.name
+          toFieldPath: metadata.name
+          transforms:
+            - type: string
+              string:
+                fmt: "read-only-role-for-%s"
+        - type: PatchSet
+          patchSetName: preventDeletion
+
+        - fromFieldPath: spec.providerConfigRef
+          toFieldPath: spec.providerConfigRef.name
+
+        - type: CombineFromComposite
+          combine:
+            strategy: string
+            variables:
+              - fromFieldPath: spec.oidcProvider.arn
+              - fromFieldPath: spec.oidcProvider.resourceName
+              - fromFieldPath: spec.irsa.namespace
+              - fromFieldPath: metadata.name
+            string:
+              fmt: |
+                {
+                	"Version": "2012-10-17",
+                	"Statement": [
+                		{
+                			"Sid": "ForIRSA",
+                			"Effect": "Allow",
+                			"Principal": {
+                				"Federated": "%s"
+                			},
+                			"Action": "sts:AssumeRoleWithWebIdentity",
+                			"Condition": {
+                				"StringLike": {
+                					"%s:sub": "system:serviceaccount:%s:%s-read"
+                				}
+                			}
+                		}
+                	]
+                }
+          toFieldPath: spec.forProvider.assumeRolePolicyDocument
+    - name: read-only-policy-for-bucket
+      base:
+        apiVersion: iam.aws.crossplane.io/v1beta1
+        kind: Policy
+        metadata:
+          name: unknown # To be overridden
+        spec:
+          forProvider:
+            name: unknown # To be overridden
+            document: | # To be overridden
+
+      patches:
+        - type: PatchSet
+          patchSetName: preventDeletion
+
+        - fromFieldPath: spec.providerConfigRef
+          toFieldPath: spec.providerConfigRef.name
+
+        - fromFieldPath: metadata.name
+          toFieldPath: metadata.name
+          transforms:
+            - type: string
+              string:
+                fmt: "read-only-policy-for-%s"
+
+        - fromFieldPath: metadata.name
+          toFieldPath: spec.forProvider.name
+          transforms:
+            - type: string
+              string:
+                fmt: "read-only-policy-for-%s"
+
+        - type: CombineFromComposite
+          combine:
+            strategy: string
+            variables:
+              - fromFieldPath: metadata.name
+              - fromFieldPath: metadata.name
+            string:
+              fmt: |
+                {
+                  "Version": "2012-10-17",
+                  "Statement": [
+                    {
+                        "Sid": "ReadOnly",
+                        "Effect": "Allow",
+                        "Action": [
+                            "s3:Get*",
+                            "s3:List*"
+                        ],
+                        "Resource": [
+                            "arn:aws:s3:::%s", 
+                            "arn:aws:s3:::%s/*"
+                        ]
+                    }
+                  ]
+                }
+          toFieldPath: spec.forProvider.document
+    - name: read-only-policy-attachment-for-bucket
+      base:
+        apiVersion: iam.aws.crossplane.io/v1beta1
+        kind: RolePolicyAttachment
+        metadata:
+          name: unknown # To be overridden
+        spec:
+          forProvider:
+            policyArnRef:
+              name: unknown
+            userNameRef:
+              name: unknown
+      patches:
+        - type: PatchSet
+          patchSetName: preventDeletion
+
+        - fromFieldPath: metadata.name
+          toFieldPath: metadata.name
+          transforms:
+            - type: string
+              string:
+                fmt: "read-only-policy-attachment-for-%s"
+
+        - fromFieldPath: spec.providerConfigRef
+          toFieldPath: spec.providerConfigRef.name
+
+        - fromFieldPath: metadata.name
+          toFieldPath: spec.forProvider.policyArnRef.name
+          transforms:
+            - type: string
+              string:
+                fmt: "read-only-policy-for-%s"
+
+        - fromFieldPath: metadata.name
+          toFieldPath: spec.forProvider.roleNameRef.name
+          transforms:
+            - type: string
+              string:
+                fmt: "read-only-role-for-%s"
+    - name: write-only-role-for-bucket
+      base:
+        apiVersion: iam.aws.crossplane.io/v1beta1
+        kind: Role
+        metadata:
+          name: unknown # To be overridden
+        spec:
+          forProvider:
+            assumeRolePolicyDocument: | # To be overridden
+      patches:
+        - fromFieldPath: metadata.name
+          toFieldPath: metadata.name
+          transforms:
+            - type: string
+              string:
+                fmt: "write-only-role-for-%s"
+        - type: PatchSet
+          patchSetName: preventDeletion
+
+        - fromFieldPath: spec.providerConfigRef
+          toFieldPath: spec.providerConfigRef.name
+
+        - type: CombineFromComposite
+          combine:
+            strategy: string
+            variables:
+              - fromFieldPath: spec.oidcProvider.arn
+              - fromFieldPath: spec.oidcProvider.resourceName
+              - fromFieldPath: spec.irsa.namespace
+              - fromFieldPath: metadata.name
+            string:
+              fmt: |
+                {
+                	"Version": "2012-10-17",
+                	"Statement": [
+                		{
+                			"Sid": "ForIRSA",
+                			"Effect": "Allow",
+                			"Principal": {
+                				"Federated": "%s"
+                			},
+                			"Action": "sts:AssumeRoleWithWebIdentity",
+                			"Condition": {
+                				"StringLike": {
+                					"%s:sub": "system:serviceaccount:%s:%s-write"
+                				}
+                			}
+                		}
+                	]
+                }
+          toFieldPath: spec.forProvider.assumeRolePolicyDocument
+    - name: write-only-policy-for-bucket
+      base:
+        apiVersion: iam.aws.crossplane.io/v1beta1
+        kind: Policy
+        metadata:
+          name: unknown # To be overridden
+        spec:
+          forProvider:
+            name: unknown # To be overridden
+            document: | # To be overridden
+
+      patches:
+        - type: PatchSet
+          patchSetName: preventDeletion
+
+        - fromFieldPath: spec.providerConfigRef
+          toFieldPath: spec.providerConfigRef.name
+
+        - fromFieldPath: metadata.name
+          toFieldPath: metadata.name
+          transforms:
+            - type: string
+              string:
+                fmt: "write-only-policy-for-%s"
+
+        - fromFieldPath: metadata.name
+          toFieldPath: spec.forProvider.name
+          transforms:
+            - type: string
+              string:
+                fmt: "write-only-policy-for-%s"
+
+        - type: CombineFromComposite
+          combine:
+            strategy: string
+            variables:
+              - fromFieldPath: metadata.name
+            string:
+              fmt: |
+                {
+                  "Version": "2012-10-17",
+                  "Statement": [
+                    {
+                        "Sid": "ReadOnly",
+                        "Effect": "Allow",
+                        "Action": [
+                            "s3:PutObject*"
+                        ],
+                        "Resource": ["arn:aws:s3:::%s/*"]
+                    }
+                  ]
+                }
+          toFieldPath: spec.forProvider.document
+    - name: write-only-policy-attachment-for-bucket
+      base:
+        apiVersion: iam.aws.crossplane.io/v1beta1
+        kind: RolePolicyAttachment
+        metadata:
+          name: unknown # To be overridden
+        spec:
+          forProvider:
+            policyArnRef:
+              name: unknown
+            userNameRef:
+              name: unknown
+      patches:
+        - type: PatchSet
+          patchSetName: preventDeletion
+
+        - fromFieldPath: metadata.name
+          toFieldPath: metadata.name
+          transforms:
+            - type: string
+              string:
+                fmt: "write-only-policy-attachment-for-%s"
+
+        - fromFieldPath: spec.providerConfigRef
+          toFieldPath: spec.providerConfigRef.name
+
+        - fromFieldPath: metadata.name
+          toFieldPath: spec.forProvider.policyArnRef.name
+          transforms:
+            - type: string
+              string:
+                fmt: "write-only-policy-for-%s"
+
+        - fromFieldPath: metadata.name
+          toFieldPath: spec.forProvider.roleNameRef.name
+          transforms:
+            - type: string
+              string:
+                fmt: "write-only-role-for-%s"
+    - name: admin-role-for-bucket
+      base:
+        apiVersion: iam.aws.crossplane.io/v1beta1
+        kind: Role
+        metadata:
+          name: unknown # To be overridden
+        spec:
+          forProvider:
+            assumeRolePolicyDocument: | # To be overridden
+      patches:
+        - fromFieldPath: metadata.name
+          toFieldPath: metadata.name
+          transforms:
+            - type: string
+              string:
+                fmt: "admin-role-for-%s"
+        - type: PatchSet
+          patchSetName: preventDeletion
+
+        - fromFieldPath: spec.providerConfigRef
+          toFieldPath: spec.providerConfigRef.name
+
+        - type: CombineFromComposite
+          combine:
+            strategy: string
+            variables:
+              - fromFieldPath: spec.oidcProvider.arn
+              - fromFieldPath: spec.oidcProvider.resourceName
+              - fromFieldPath: spec.irsa.namespace
+              - fromFieldPath: metadata.name
+            string:
+              fmt: |
+                {
+                	"Version": "2012-10-17",
+                	"Statement": [
+                		{
+                			"Sid": "ForIRSA",
+                			"Effect": "Allow",
+                			"Principal": {
+                				"Federated": "%s"
+                			},
+                			"Action": "sts:AssumeRoleWithWebIdentity",
+                			"Condition": {
+                				"StringLike": {
+                					"%s:sub": "system:serviceaccount:%s:%s-admin"
+                				}
+                			}
+                		}
+                	]
+                }
+          toFieldPath: spec.forProvider.assumeRolePolicyDocument
+    - name: admin-policy-for-bucket
+      base:
+        apiVersion: iam.aws.crossplane.io/v1beta1
+        kind: Policy
+        metadata:
+          name: unknown # To be overridden
+        spec:
+          forProvider:
+            name: unknown # To be overridden
+            document: | # To be overridden
+
+      patches:
+        - type: PatchSet
+          patchSetName: preventDeletion
+
+        - fromFieldPath: spec.providerConfigRef
+          toFieldPath: spec.providerConfigRef.name
+
+        - fromFieldPath: metadata.name
+          toFieldPath: metadata.name
+          transforms:
+            - type: string
+              string:
+                fmt: "admin-policy-for-%s"
+
+        - fromFieldPath: metadata.name
+          toFieldPath: spec.forProvider.name
+          transforms:
+            - type: string
+              string:
+                fmt: "admin-policy-for-%s"
+
+        - type: CombineFromComposite
+          combine:
+            strategy: string
+            variables:
+              - fromFieldPath: metadata.name
+              - fromFieldPath: metadata.name
+            string:
+              fmt: |
+                {
+                  "Version": "2012-10-17",
+                  "Statement": [
+                    {
+                        "Sid": "ReadOnly",
+                        "Effect": "Allow",
+                        "Action": [
+                            "s3:*"
+                        ],
+                        "Resource": ["arn:aws:s3:::%s/*", "arn:aws:s3:::%s"]
+                    }
+                  ]
+                }
+          toFieldPath: spec.forProvider.document
+    - name: admin-policy-attachment-for-bucket
+      base:
+        apiVersion: iam.aws.crossplane.io/v1beta1
+        kind: RolePolicyAttachment
+        metadata:
+          name: unknown # To be overridden
+        spec:
+          forProvider:
+            policyArnRef:
+              name: unknown
+            userNameRef:
+              name: unknown
+      patches:
+        - type: PatchSet
+          patchSetName: preventDeletion
+
+        - fromFieldPath: metadata.name
+          toFieldPath: metadata.name
+          transforms:
+            - type: string
+              string:
+                fmt: "admin-policy-attachment-for-%s"
+
+        - fromFieldPath: spec.providerConfigRef
+          toFieldPath: spec.providerConfigRef.name
+
+        - fromFieldPath: metadata.name
+          toFieldPath: spec.forProvider.policyArnRef.name
+          transforms:
+            - type: string
+              string:
+                fmt: "admin-policy-for-%s"
+
+        - fromFieldPath: metadata.name
+          toFieldPath: spec.forProvider.roleNameRef.name
+          transforms:
+            - type: string
+              string:
+                fmt: "admin-role-for-%s"

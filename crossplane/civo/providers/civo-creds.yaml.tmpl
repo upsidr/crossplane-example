@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: civo-creds
+  namespace: crossplane-system
+type: Opaque
+data:
+  credentials: "${CIVO_API_KEY_B64}"

@@ -1,0 +1,68 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositeResourceDefinition
+metadata:
+  name: xprojectiammembers.gcp.crossplane.upsider.dev 
+spec:
+  group: gcp.crossplane.upsider.dev
+  claimNames:
+    kind: ProjectIAMMember
+    plural: projectiammembers
+  names:
+    kind: XProjectIAMMember
+    plural: xprojectiammembers
+  versions:
+  - name: v1alpha1
+    served: true
+    referenceable: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          spec:
+            type: object
+            properties:
+              id:
+                type: string
+                description: ID of this IAM binding for resource name and object reference.
+                minLength: 4
+                maxLength: 63
+              parameters:
+                type: object
+                description: IAM member configuration parameters.
+                properties:
+                  project:
+                    type: string
+                    description: Project ID of the target project.
+                  role:
+                    type: string
+                    description: Role that should be granted to the member.
+                    pattern: ^roles/.+$
+                  user:
+                    type: string
+                    description: Email address of the user to grant the role to.
+                  serviceAccount:
+                    type: string
+                    description: Email address of the service account to grant the role to.
+                  group:
+                    type: string
+                    description: Email address of the group to grant the role to.
+                  domain:
+                    type: string
+                    description: Google Workspace domain to grant the role to.
+                allOf:
+                - required:
+                  - project
+                  - role
+                # Fields that will be applied to `member` are mutually exclusive.
+                - oneOf:
+                  - required: [user]
+                  - required: [serviceAccount]
+                  - required: [group]
+                  - required: [domain]
+              preventDeletion:
+                type: boolean
+                description: When set to true, it prevents deleting the remote resources.
+                default: false
+            required:
+            - id
+            - parameters

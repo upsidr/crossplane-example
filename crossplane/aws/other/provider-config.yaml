@@ -1,0 +1,14 @@
+---
+apiVersion: aws.crossplane.io/v1beta1
+kind: ProviderConfig
+metadata:
+  name: default
+  # For Argo CD
+  # annotations:
+  #   # Because this CR is created via Crossplane controller, we need to disable
+  #   # dry run resource check.
+  #   argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+  #   argocd.argoproj.io/sync-wave: "5"
+spec:
+  credentials:
+    source: InjectedIdentity

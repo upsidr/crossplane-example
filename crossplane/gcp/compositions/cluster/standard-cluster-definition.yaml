@@ -1,0 +1,157 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositeResourceDefinition
+metadata:
+  name: xstandardclusters.gcp.crossplane.upsider.dev
+spec:
+  group: gcp.crossplane.upsider.dev
+  claimNames:
+    kind: StandardCluster
+    plural: standardclusters
+  names:
+    kind: XStandardCluster
+    plural: xstandardclusters
+  connectionSecretKeys:
+    - kubeconfig
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                # This ID is necessary in order to ensure both Claim / XR
+                # usages are supported. When using XR directly, metadata.name
+                # would be sufficient. However, when using Claim, metadata.name
+                # will get some random suffix added, which makes it difficult
+                # to refer to the same object. There are other ways to refer to
+                # the Claim name, but then it won't work when using XR.
+                #
+                # This will be used for most of managed resources and external names.
+                # Make sure the value of this field is valid for GCP resources to be generated.
+                id:
+                  type: string
+                  description: ID of this cluster for resource names and object reference.
+                  minLength: 3
+                  # The maximum length of service account names are 30 characters.
+                  maxLength: 30
+                parameters:
+                  type: object
+                  description: Cluster configuration parameters.
+                  properties:
+                    # TODO(micnncim): Find out a way to remove `projectId`.
+                    projectId:
+                      type: string
+                      description: Project ID to deploy this cluster in.
+                    # TODO(micnncim): Find out a way to remove `projectNumber`.
+                    projectNumber:
+                      type: integer
+                      description: Project number to deploy this cluster in.
+                    region:
+                      type: string
+                      description: Region to deploy this cluster in.
+                      enum:
+                        - asia-northeast1
+                        - asia-northeast2
+                      default: asia-northeast1
+                    master:
+                      type: object
+                      description: Cluster master configuration parameters.
+                      properties:
+                        minVersion:
+                          type: string
+                          description: Minimum version of cluster to deploy.
+                          default: "1.25"
+                        cidr:
+                          type: string
+                          # See https://cloud.google.com/kubernetes-engine/docs/how-to/private-clusters#req_res_lim
+                          # for more information.
+                          description: IP address range for the master nodes. This must be exactly /28 and cannot overlap with any other ranges.
+                          pattern: ^([0-9]{1,3}\.){3}[0-9]{1,3}(\/28)?$
+                        firewall:
+                          type: object
+                          description: Firewall configuration parameters for the master nodes.
+                          properties:
+                            allow:
+                              type: object
+                              description: ALLOW rules specified by the firewall.
+                              properties:
+                                ports:
+                                  type: array
+                                  description: List of ports to which the rule applies.
+                                  items:
+                                    type: string
+                                  default: []
+                              default: {}
+                          default: {}
+                      required:
+                        - cidr
+                    nodes:
+                      type: object
+                      description: Cluster node configuration parameters.
+                      properties:
+                        minCount:
+                          type: integer
+                          description: Minimum node count.
+                          minimum: 1
+                          maximum: 10
+                          default: 1
+                        maxCount:
+                          type: integer
+                          description: Maximum node count.
+                          minimum: 1
+                          maximum: 30
+                          default: 2
+                        size:
+                          type: string
+                          description: Size of node.
+                          enum:
+                            - small
+                            - medium
+                            - large
+                          default: small
+                      default: {}
+                    networkRef:
+                      type: object
+                      description: Reference to the ClusterNetwork object that this cluster should be connected to.
+                      properties:
+                        id:
+                          type: string
+                          description: ID of the ClusterNetwork object this reference points to.
+                      required:
+                        - id
+                  required:
+                    - projectId
+                    - projectNumber
+                    - master
+                    - networkRef
+                providerConfigRef:
+                  type: string
+                  description: ProviderConfig reference to be used.
+                preventDeletion:
+                  type: boolean
+                  description: When set to true, it prevents deleting the remote resources.
+                  default: false
+              required:
+                - id
+                - parameters
+                - providerConfigRef
+            status:
+              type: object
+              properties:
+                clusterStatus:
+                  description: The status of the cluster control plane.
+                  type: string
+                nodePoolStatus:
+                  description: The status of the node pool.
+                  type: string
+      additionalPrinterColumns:
+        - name: cluster
+          type: string
+          jsonPath: ".status.clusterStatus"
+        - name: nodePool
+          type: string
+          jsonPath: ".status.nodePoolStatus"

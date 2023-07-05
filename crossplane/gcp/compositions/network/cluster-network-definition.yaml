@@ -1,0 +1,99 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositeResourceDefinition
+metadata:
+  name: xclusternetworks.gcp.crossplane.upsider.dev
+spec:
+  group: gcp.crossplane.upsider.dev
+  claimNames:
+    kind: ClusterNetwork
+    plural: clusternetworks
+  names:
+    kind: XClusterNetwork
+    plural: xclusternetworks
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                # This ID is necessary in order to ensure both Claim / XR
+                # usages are supported. When using XR directly, metadata.name
+                # would be sufficient. However, when using Claim, metadata.name
+                # will get some random suffix added, which makes it difficult
+                # to refer to the same object. There are other ways to refer to
+                # the Claim name, but then it won't work when using XR.
+                #
+                # This will be used for most of managed resources and external names.
+                # Make sure the value of this field is valid for GCP resources to be generated.
+                id:
+                  type: string
+                  description: ID of this network for resource names and object reference.
+                  minLength: 3
+                  # Names of most GCP resources are limited to 63 characters.
+                  maxLength: 63
+                parameters:
+                  type: object
+                  description: Network configuration parameters.
+                  properties:
+                    # TODO(micnncim): Find out a way to remove `projectId`.
+                    projectId:
+                      type: string
+                      description: Project ID to deploy this network in.
+                    region:
+                      type: string
+                      description: Region to deploy this network in.
+                      enum:
+                        - asia-northeast1
+                        - asia-northeast2
+                      default: asia-northeast1
+                    cidrs:
+                      type: object
+                      description: IP ranges configuration parameters.
+                      properties:
+                        nodes:
+                          type: string
+                          description: IP address range for nodes and internal load balancers. This cannot overlap with any other ranges.
+                          # We are limiting the CIDR range to be /29 or bigger.
+                          # The largest possible CIDR is /8.
+                          # For more information, check out the reference below.
+                          # Ref: https://cloud.google.com/kubernetes-engine/docs/concepts/alias-ips#cluster_sizing_primary_range
+                          pattern: ^([0-9]{1,3}\.){3}[0-9]{1,3}(\/([8-9]|[1-2][0-9]))?$
+                        pods:
+                          type: string
+                          # We are limiting the CIDR range to be /24 or bigger.
+                          # The largest possible CIDR is /9.
+                          # For more information, check out the reference below.
+                          # Ref: https://cloud.google.com/kubernetes-engine/docs/concepts/alias-ips#cluster_sizing_secondary_range_pods
+                          description: IP address range for Pods. This cannot overlap with any other ranges.
+                          pattern: ^([0-9]{1,3}\.){3}[0-9]{1,3}(\/(9|1[0-9]|2[0-4]))?$
+                        services:
+                          type: string
+                          # We are limiting the CIDR range to be /28 or bigger.
+                          # The largest possible CIDR is /16.
+                          # For more information, check out the reference below.
+                          # Ref: https://cloud.google.com/kubernetes-engine/docs/concepts/alias-ips#cluster_sizing_secondary_range_svcs
+                          description: IP address range for Services. This cannot overlap with any other ranges.
+                          pattern: ^([0-9]{1,3}\.){3}[0-9]{1,3}(\/(1[6-9]|2[0-8]))?$
+                      required:
+                        - nodes
+                        - pods
+                        - services
+                  required:
+                    - projectId
+                    - cidrs
+                providerConfigRef:
+                  type: string
+                  description: ProviderConfig reference to be used.
+                preventDeletion:
+                  type: boolean
+                  description: When set to true, it prevents deleting the remote resources.
+                  default: false
+              required:
+                - id
+                - parameters
+                - providerConfigRef

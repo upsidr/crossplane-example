@@ -1,0 +1,178 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositeResourceDefinition
+metadata:
+  name: xcpnetworks.aws.crossplane.upsider.dev
+spec:
+  group: aws.crossplane.upsider.dev
+  claimNames:
+    kind: ControlPlaneNetwork
+    plural: cpnetworks
+  names:
+    kind: XControlPlaneNetwork
+    plural: xcpnetworks
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                # This ID is necessary in order to ensure both Claim / XR
+                # usages are supported. When using XR directly, metadata.name
+                # would be sufficient. However, when using Claim, metadata.name
+                # will get some random suffix added, which makes it difficult
+                # to refer to the same object. There are other ways to refer to
+                # the Claim name, but then it won't work when using XR.
+                id:
+                  type: string
+                  description: ID of this network for object reference.
+                region:
+                  type: string
+                  description: Region to deploy this network in.
+                cidrInput:
+                  type: object
+                  description: IP CIDR information for the network.
+                  properties:
+                    vpcCIDR:
+                      type: string
+                      description: CIDR block to assign for the VPC.
+                    subnetCIDR-1:
+                      type: string
+                      description: CIDR block to assign for the subnet 1.
+                    subnetCIDR-2:
+                      type: string
+                      description: CIDR block to assign for the subnet 2.
+                    subnetCIDR-3:
+                      type: string
+                      description: CIDR block to assign for the subnet 3.
+                    privateSubnetCIDR-1:
+                      type: string
+                      description: CIDR block to assign for the private subnet 1.
+                    privateSubnetCIDR-2:
+                      type: string
+                      description: CIDR block to assign for the private subnet 2.
+                    privateSubnetCIDR-3:
+                      type: string
+                      description: CIDR block to assign for the private subnet 3.
+                  required:
+                    - vpcCIDR
+                    - subnetCIDR-1
+                    - subnetCIDR-2
+                    - subnetCIDR-3
+                    - privateSubnetCIDR-1
+                    - privateSubnetCIDR-2
+                    - privateSubnetCIDR-3
+                providerConfigRef:
+                  type: string
+                  description: ProviderConfig reference to be used.
+                useExistingNetwork:
+                  type: object
+                  description: Use existing network definitions instead of creating one.
+                  properties:
+                    vpcID:
+                      type: string
+                      description: VPC ID to use.
+                    internetGatewayID:
+                      type: string
+                      description: Internet Gateway ID to use.
+                    publicRouteTableID:
+                      type: string
+                      description: RouteTable ID for Public Route Table.
+                    subnet-1:
+                      type: string
+                      description: Subnet ID for subnet 1.
+                    subnet-2:
+                      type: string
+                      description: Subnet ID for subnet 2.
+                    subnet-3:
+                      type: string
+                      description: Subnet ID for subnet 3.
+                    privateSubnet-1:
+                      type: object
+                      description: Fields for private subnet 1.
+                      properties:
+                        subnetID:
+                          type: string
+                          description: Subnet ID for private subnet 1.
+                        eipID:
+                          type: string
+                          description: Elastic IP ID for private subnet 1.
+                        natGatewayID:
+                          type: string
+                          description: NAT Gateway ID for private subnet 1.
+                        routeTableID:
+                          type: string
+                          description: RouteTable ID for private subnet 1.
+                      required:
+                        - subnetID
+                        - eipID
+                        - natGatewayID
+                        - routeTableID
+                    privateSubnet-2:
+                      type: object
+                      description: Fields for private subnet 2.
+                      properties:
+                        subnetID:
+                          type: string
+                          description: Subnet ID for private subnet 2.
+                        eipID:
+                          type: string
+                          description: Elastic IP ID for private subnet 2.
+                        natGatewayID:
+                          type: string
+                          description: NAT Gateway ID for private subnet 2.
+                        routeTableID:
+                          type: string
+                          description: RouteTable ID for private subnet 2.
+                      required:
+                        - subnetID
+                        - eipID
+                        - natGatewayID
+                        - routeTableID
+                    privateSubnet-3:
+                      type: object
+                      description: Fields for private subnet 3.
+                      properties:
+                        subnetID:
+                          type: string
+                          description: Subnet ID for private subnet 3.
+                        eipID:
+                          type: string
+                          description: Elastic IP ID for private subnet 3.
+                        natGatewayID:
+                          type: string
+                          description: NAT Gateway ID for private subnet 3.
+                        routeTableID:
+                          type: string
+                          description: RouteTable ID for private subnet 3.
+                      required:
+                        - subnetID
+                        - eipID
+                        - natGatewayID
+                        - routeTableID
+                    securityGroupID:
+                      type: string
+                      description: SecurityGroup ID to use.
+                    preventDeletion:
+                      type: boolean
+                      default: false
+                      description: When set to true, it prevents deleting the remote resources.
+                  required:
+                    - vpcID
+                    - internetGatewayID
+                    - publicRouteTableID
+                    - subnet-1
+                    - subnet-2
+                    - subnet-3
+                    - privateSubnet-1
+                    - privateSubnet-2
+                    - privateSubnet-3
+                    - securityGroupID
+              required:
+                - id
+                - region
+                - cidrInput

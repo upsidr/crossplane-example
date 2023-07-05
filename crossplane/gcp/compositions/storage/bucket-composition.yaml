@@ -1,0 +1,64 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: xbucket-gcp
+  labels:
+    crossplane.io/xrd: xbuckets.gcp.crossplane.upsider.dev
+    provider: GCP
+spec:
+  compositeTypeRef:
+    apiVersion: gcp.crossplane.upsider.dev/v1alpha1
+    kind: XBucket
+  writeConnectionSecretsToNamespace: crossplane-system
+  patchSets:
+    - name: name
+      patches:
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.id
+          toFieldPath: metadata.name
+    - name: prevent-deletion
+      patches:
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.preventDeletion
+          toFieldPath: spec.deletionPolicy
+          transforms:
+            - type: convert
+              convert:
+                toType: string
+            - type: map
+              map:
+                "true": Orphan
+                "false": Delete
+    - name: provider-config-ref
+      patches:
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.providerConfigRef
+          toFieldPath: spec.providerConfigRef.name
+  resources:
+    - name: bucket
+      base:
+        apiVersion: storage.gcp.upbound.io/v1beta1
+        kind: Bucket
+      patches:
+        - type: PatchSet
+          patchSetName: name
+        - type: PatchSet
+          patchSetName: prevent-deletion
+        - type: PatchSet
+          patchSetName: provider-config-ref
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.parameters.class
+          toFieldPath: spec.forProvider.storageClass
+          transforms:
+            - type: string
+              string:
+                type: Convert
+                convert: ToUpper
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.parameters.location
+          toFieldPath: spec.forProvider.location
+          transforms:
+            - type: string
+              string:
+                type: Convert
+                convert: ToUpper

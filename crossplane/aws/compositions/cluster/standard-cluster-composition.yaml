@@ -1,0 +1,1025 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: xstandardcluster-aws
+  labels:
+    crossplane.io/xrd: xstandardclusters.aws.crossplane.upsider.dev
+spec:
+  compositeTypeRef:
+    apiVersion: aws.crossplane.upsider.dev/v1alpha1
+    kind: XStandardCluster
+  writeConnectionSecretsToNamespace: crossplane-system
+  patchSets:
+    - name: preventDeletion
+      patches:
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.preventDeletion
+          toFieldPath: spec.deletionPolicy
+          transforms:
+            - type: convert
+              convert:
+                toType: string
+            - type: map
+              map:
+                "true": Orphan
+                "false": Delete
+  resources:
+    # Some fields added on top of the base setup reference here:
+    # https://github.com/upbound/platform-ref-multi-k8s/tree/main/examples
+    - name: iam-role-for-control-plane
+      base:
+        apiVersion: iam.aws.crossplane.io/v1beta1
+        kind: Role
+        metadata:
+          labels:
+            role: controlplane
+        spec:
+          forProvider:
+            assumeRolePolicyDocument: |
+              {
+                  "Version": "2012-10-17",
+                  "Statement": [
+                      {
+                          "Effect": "Allow",
+                          "Principal": {
+                              "Service": "eks.amazonaws.com"
+                          },
+                          "Action": "sts:AssumeRole"
+                      }
+                  ]
+              }
+            # tags:
+            #   - key: Managed-by
+            #     value: Crossplane
+            #   - key: CrossplaneID
+            #     value: unknown # To be overridden
+      patches:
+        - fromFieldPath: spec.id
+          toFieldPath: metadata.name
+          transforms:
+            - type: string
+              string:
+                fmt: "%s-role-for-control-plane"
+        - type: PatchSet
+          patchSetName: preventDeletion
+
+        - fromFieldPath: spec.providerConfigRef
+          toFieldPath: spec.providerConfigRef.name
+        - fromFieldPath: spec.id
+          toFieldPath: metadata.annotations[crossplane.io/external-name]
+          transforms:
+            - type: string
+              string:
+                fmt: "%s-role-for-control-plane"
+
+        # # Additional Data
+        # - fromFieldPath: spec.id
+        #   toFieldPath: spec.forProvider.tags[1].value
+    - name: iam-role-policy-attachment-for-control-plane
+      base:
+        apiVersion: iam.aws.crossplane.io/v1beta1
+        kind: RolePolicyAttachment
+        spec:
+          forProvider:
+            policyArn: arn:aws:iam::aws:policy/AmazonEKSClusterPolicy
+            roleNameSelector:
+              matchControllerRef: true
+              matchLabels:
+                role: controlplane
+      patches:
+        - type: PatchSet
+          patchSetName: preventDeletion
+
+        - fromFieldPath: spec.providerConfigRef
+          toFieldPath: spec.providerConfigRef.name
+    - name: cluster
+      base:
+        apiVersion: eks.aws.crossplane.io/v1beta1
+        kind: Cluster
+        spec:
+          forProvider:
+            roleArnSelector:
+              matchControllerRef: true
+              matchLabels:
+                role: controlplane
+            resourcesVpcConfig:
+              endpointPrivateAccess: true
+              endpointPublicAccess: true
+            logging:
+              clusterLogging:
+                # This cannot be updated on the fly, due to a known limitation.
+                # Ref: https://github.com/crossplane/provider-aws/issues/1014
+                - enabled: false
+                  types:
+                    # - api
+                    # - audit
+                    - authenticator
+                    # - controllerManager
+                    # - scheduler
+                - enabled: false
+                  types:
+                    - api
+                    - audit
+                    # - authenticator
+                    - controllerManager
+                    - scheduler
+            tags:
+              managed-by: Crossplane
+              CrossplaneID: unknown # To be overridden
+      patches:
+        - fromFieldPath: spec.id
+          toFieldPath: metadata.annotations[crossplane.io/external-name]
+        - type: PatchSet
+          patchSetName: preventDeletion
+
+        - fromFieldPath: spec.providerConfigRef
+          toFieldPath: spec.providerConfigRef.name
+        - fromFieldPath: spec.parameters.region
+          toFieldPath: spec.forProvider.region
+          policy:
+            fromFieldPath: Required
+        - fromFieldPath: spec.parameters.minVersion
+          toFieldPath: spec.forProvider.version
+          policy:
+            fromFieldPath: Required
+        - fromFieldPath: spec.parameters.deploymentMode
+          toFieldPath: spec.forProvider.logging.clusterLogging[0].enabled
+          transforms:
+            - type: map
+              map:
+                production: "true"
+                staging: "false"
+                dev: "false"
+            - type: convert
+              convert:
+                toType: bool
+
+        - fromFieldPath: metadata.uid
+          toFieldPath: spec.writeConnectionSecretToRef.name
+          transforms:
+            - type: string
+              string:
+                fmt: "%s-ekscluster"
+        - fromFieldPath: spec.writeConnectionSecretToRef.namespace
+          toFieldPath: spec.writeConnectionSecretToRef.namespace
+        - fromFieldPath: spec.parameters.networkRef.id
+          toFieldPath: spec.forProvider.resourcesVpcConfig.securityGroupIdSelector.matchLabels[networks.aws.crossplane.upsider.dev/network-id]
+        - fromFieldPath: spec.parameters.networkRef.id
+          toFieldPath: spec.forProvider.resourcesVpcConfig.subnetIdSelector.matchLabels[networks.aws.crossplane.upsider.dev/network-id]
+
+        # Additional Data
+        - fromFieldPath: spec.id
+          toFieldPath: spec.forProvider.tags.CrossplaneID
+
+        # Status handling
+        - type: ToCompositeFieldPath
+          fromFieldPath: status.atProvider.status
+          toFieldPath: status.controlPlaneStatus
+      readinessChecks:
+        - type: MatchString
+          fieldPath: status.atProvider.status
+          matchString: ACTIVE
+
+      connectionDetails:
+        - fromConnectionSecretKey: kubeconfig
+    - name: iam-role-for-node-group
+      base:
+        apiVersion: iam.aws.crossplane.io/v1beta1
+        kind: Role
+        metadata:
+          labels:
+            role: nodegroup
+        spec:
+          forProvider:
+            assumeRolePolicyDocument: |
+              {
+                  "Version": "2012-10-17",
+                  "Statement": [
+                      {
+                          "Effect": "Allow",
+                          "Principal": {
+                              "Service": "ec2.amazonaws.com"
+                          },
+                          "Action": "sts:AssumeRole"
+                      }
+                  ]
+              }
+            # tags:
+            #   - key: Managed-by
+            #     value: Crossplane
+            #   - key: CrossplaneID
+            #     value: unknown # To be overridden
+      patches:
+        - fromFieldPath: spec.id
+          toFieldPath: metadata.name
+          transforms:
+            - type: string
+              string:
+                fmt: "%s-role-for-node-group"
+        - type: PatchSet
+          patchSetName: preventDeletion
+
+        - fromFieldPath: spec.providerConfigRef
+          toFieldPath: spec.providerConfigRef.name
+        - fromFieldPath: spec.id
+          toFieldPath: metadata.annotations[crossplane.io/external-name]
+          transforms:
+            - type: string
+              string:
+                fmt: "%s-role-for-node-group"
+
+        # # Additional Data
+        # - fromFieldPath: spec.id
+        #   toFieldPath: spec.forProvider.tags[1].value
+    - name: iam-role-policy-attachment-for-node-group-worker-node
+      base:
+        apiVersion: iam.aws.crossplane.io/v1beta1
+        kind: RolePolicyAttachment
+        spec:
+          forProvider:
+            policyArn: arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
+            roleNameSelector:
+              matchControllerRef: true
+              matchLabels:
+                role: nodegroup
+      patches:
+        - type: PatchSet
+          patchSetName: preventDeletion
+
+        - fromFieldPath: spec.providerConfigRef
+          toFieldPath: spec.providerConfigRef.name
+    - name: iam-role-policy-attachment-for-node-group-cni
+      base:
+        apiVersion: iam.aws.crossplane.io/v1beta1
+        kind: RolePolicyAttachment
+        spec:
+          forProvider:
+            policyArn: arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy
+            roleNameSelector:
+              matchControllerRef: true
+              matchLabels:
+                role: nodegroup
+      patches:
+        - type: PatchSet
+          patchSetName: preventDeletion
+
+        - fromFieldPath: spec.providerConfigRef
+          toFieldPath: spec.providerConfigRef.name
+    - name: iam-role-policy-attachment-for-node-group-ecr
+      base:
+        apiVersion: iam.aws.crossplane.io/v1beta1
+        kind: RolePolicyAttachment
+        spec:
+          forProvider:
+            policyArn: arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+            roleNameSelector:
+              matchControllerRef: true
+              matchLabels:
+                role: nodegroup
+      patches:
+        - type: PatchSet
+          patchSetName: preventDeletion
+
+        - fromFieldPath: spec.providerConfigRef
+          toFieldPath: spec.providerConfigRef.name
+    - name: iam-role-policy-attachment-for-node-group-ebs-csi
+      base:
+        apiVersion: iam.aws.crossplane.io/v1beta1
+        kind: RolePolicyAttachment
+        spec:
+          forProvider:
+            policyArn: arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy
+            roleNameSelector:
+              matchControllerRef: true
+              matchLabels:
+                role: nodegroup
+      patches:
+        - type: PatchSet
+          patchSetName: preventDeletion
+
+        - fromFieldPath: spec.providerConfigRef
+          toFieldPath: spec.providerConfigRef.name
+
+    # Node Groups
+    # Ref: https://aws.amazon.com/ec2/instance-types/
+    - name: node-group-general-purpose
+      base:
+        apiVersion: eks.aws.crossplane.io/v1alpha1
+        kind: NodeGroup
+        spec:
+          forProvider:
+            amiType: BOTTLEROCKET_x86_64
+            clusterNameSelector:
+              matchControllerRef: true
+            nodeRoleSelector:
+              matchControllerRef: true
+              matchLabels:
+                role: nodegroup
+            subnetSelector:
+              matchLabels:
+                access: public
+            tags:
+              managed-by: Crossplane
+              CrossplaneID: unknown # To be overridden
+            capacityType: ON_DEMAND
+            instanceTypes:
+              - m6i.large
+            scalingConfig:
+              minSize: 0
+              maxSize: 1
+              # Based on https://github.com/crossplane-contrib/provider-aws/pull/502,
+              # we shouldn't provide any desiredSize when using cluster autoscaling etc.
+              # desiredSize: 0
+
+      patches:
+        - type: PatchSet
+          patchSetName: preventDeletion
+
+        - fromFieldPath: spec.id
+          toFieldPath: metadata.annotations[crossplane.io/external-name]
+          transforms:
+            - type: string
+              string:
+                fmt: "%s-general-purpose"
+
+        - fromFieldPath: spec.providerConfigRef
+          toFieldPath: spec.providerConfigRef.name
+        - fromFieldPath: spec.parameters.region
+          toFieldPath: spec.forProvider.region
+        - fromFieldPath: spec.parameters.minVersion
+          toFieldPath: spec.forProvider.version
+          policy:
+            fromFieldPath: Required
+
+        - fromFieldPath: spec.parameters.nodes.generalPurposeNodes.minCount
+          toFieldPath: spec.forProvider.scalingConfig.minSize
+        - fromFieldPath: spec.parameters.nodes.generalPurposeNodes.maxCount
+          toFieldPath: spec.forProvider.scalingConfig.maxSize
+
+        - fromFieldPath: spec.parameters.networkRef.id
+          toFieldPath: spec.forProvider.subnetSelector.matchLabels[networks.aws.crossplane.upsider.dev/network-id]
+
+        # Additional Data
+        - fromFieldPath: spec.id
+          toFieldPath: spec.forProvider.tags.CrossplaneID
+
+        # Status handling
+        - type: ToCompositeFieldPath
+          fromFieldPath: status.atProvider.status
+          toFieldPath: status.nodePoolStatus
+      readinessChecks:
+        - type: MatchString
+          fieldPath: status.atProvider.status
+          matchString: ACTIVE
+    - name: node-group-general-purpose-spot
+      base:
+        apiVersion: eks.aws.crossplane.io/v1alpha1
+        kind: NodeGroup
+        spec:
+          forProvider:
+            amiType: BOTTLEROCKET_x86_64
+            clusterNameSelector:
+              matchControllerRef: true
+            nodeRoleSelector:
+              matchControllerRef: true
+              matchLabels:
+                role: nodegroup
+            subnetSelector:
+              matchLabels:
+                access: public
+            tags:
+              managed-by: Crossplane
+              CrossplaneID: unknown # To be overridden
+            capacityType: SPOT
+            instanceTypes:
+              - m6i.large
+            scalingConfig:
+              minSize: 0
+              maxSize: 1
+              # Based on https://github.com/crossplane-contrib/provider-aws/pull/502,
+              # we shouldn't provide any desiredSize when using cluster autoscaling etc.
+              # desiredSize: 0
+
+      patches:
+        - type: PatchSet
+          patchSetName: preventDeletion
+
+        - fromFieldPath: spec.id
+          toFieldPath: metadata.annotations[crossplane.io/external-name]
+          transforms:
+            - type: string
+              string:
+                fmt: "%s-general-purpose-spot"
+
+        - fromFieldPath: spec.providerConfigRef
+          toFieldPath: spec.providerConfigRef.name
+        - fromFieldPath: spec.parameters.region
+          toFieldPath: spec.forProvider.region
+        - fromFieldPath: spec.parameters.minVersion
+          toFieldPath: spec.forProvider.version
+          policy:
+            fromFieldPath: Required
+
+        - fromFieldPath: spec.parameters.nodes.generalPurposeSpotNodes.minCount
+          toFieldPath: spec.forProvider.scalingConfig.minSize
+        - fromFieldPath: spec.parameters.nodes.generalPurposeSpotNodes.maxCount
+          toFieldPath: spec.forProvider.scalingConfig.maxSize
+
+        - fromFieldPath: spec.parameters.networkRef.id
+          toFieldPath: spec.forProvider.subnetSelector.matchLabels[networks.aws.crossplane.upsider.dev/network-id]
+
+        # Additional Data
+        - fromFieldPath: spec.id
+          toFieldPath: spec.forProvider.tags.CrossplaneID
+
+        # Status handling
+        - type: ToCompositeFieldPath
+          fromFieldPath: status.atProvider.status
+          toFieldPath: status.nodePoolStatus
+      readinessChecks:
+        - type: MatchString
+          fieldPath: status.atProvider.status
+          matchString: ACTIVE
+    - name: node-group-low-cost
+      base:
+        apiVersion: eks.aws.crossplane.io/v1alpha1
+        kind: NodeGroup
+        spec:
+          forProvider:
+            amiType: BOTTLEROCKET_ARM_64
+            clusterNameSelector:
+              matchControllerRef: true
+            nodeRoleSelector:
+              matchControllerRef: true
+              matchLabels:
+                role: nodegroup
+            subnetSelector:
+              matchLabels:
+                access: public
+            tags:
+              managed-by: Crossplane
+              CrossplaneID: unknown # To be overridden
+            capacityType: ON_DEMAND
+            instanceTypes:
+              - t4g.medium
+            scalingConfig:
+              minSize: 0
+              maxSize: 1
+              # Based on https://github.com/crossplane-contrib/provider-aws/pull/502,
+              # we shouldn't provide any desiredSize when using cluster autoscaling etc.
+              # desiredSize: 0
+
+      patches:
+        - type: PatchSet
+          patchSetName: preventDeletion
+
+        - fromFieldPath: spec.id
+          toFieldPath: metadata.annotations[crossplane.io/external-name]
+          transforms:
+            - type: string
+              string:
+                fmt: "%s-low-cost"
+
+        - fromFieldPath: spec.providerConfigRef
+          toFieldPath: spec.providerConfigRef.name
+        - fromFieldPath: spec.parameters.region
+          toFieldPath: spec.forProvider.region
+        - fromFieldPath: spec.parameters.minVersion
+          toFieldPath: spec.forProvider.version
+          policy:
+            fromFieldPath: Required
+
+        - fromFieldPath: spec.parameters.nodes.lowCostNodes.minCount
+          toFieldPath: spec.forProvider.scalingConfig.minSize
+        - fromFieldPath: spec.parameters.nodes.lowCostNodes.maxCount
+          toFieldPath: spec.forProvider.scalingConfig.maxSize
+
+        - fromFieldPath: spec.parameters.networkRef.id
+          toFieldPath: spec.forProvider.subnetSelector.matchLabels[networks.aws.crossplane.upsider.dev/network-id]
+
+        # Additional Data
+        - fromFieldPath: spec.id
+          toFieldPath: spec.forProvider.tags.CrossplaneID
+
+        # Status handling
+        - type: ToCompositeFieldPath
+          fromFieldPath: status.atProvider.status
+          toFieldPath: status.nodePoolStatus
+      readinessChecks:
+        - type: MatchString
+          fieldPath: status.atProvider.status
+          matchString: ACTIVE
+    - name: node-group-low-cost-spot
+      base:
+        apiVersion: eks.aws.crossplane.io/v1alpha1
+        kind: NodeGroup
+        spec:
+          forProvider:
+            amiType: BOTTLEROCKET_ARM_64
+            clusterNameSelector:
+              matchControllerRef: true
+            nodeRoleSelector:
+              matchControllerRef: true
+              matchLabels:
+                role: nodegroup
+            subnetSelector:
+              matchLabels:
+                access: public
+            tags:
+              managed-by: Crossplane
+              CrossplaneID: unknown # To be overridden
+            capacityType: SPOT
+            instanceTypes:
+              - t4g.medium
+            scalingConfig:
+              minSize: 0
+              maxSize: 1
+              # Based on https://github.com/crossplane-contrib/provider-aws/pull/502,
+              # we shouldn't provide any desiredSize when using cluster autoscaling etc.
+              # desiredSize: 0
+
+      patches:
+        - type: PatchSet
+          patchSetName: preventDeletion
+
+        - fromFieldPath: spec.id
+          toFieldPath: metadata.annotations[crossplane.io/external-name]
+          transforms:
+            - type: string
+              string:
+                fmt: "%s-low-cost-spot"
+
+        - fromFieldPath: spec.providerConfigRef
+          toFieldPath: spec.providerConfigRef.name
+        - fromFieldPath: spec.parameters.region
+          toFieldPath: spec.forProvider.region
+        - fromFieldPath: spec.parameters.minVersion
+          toFieldPath: spec.forProvider.version
+          policy:
+            fromFieldPath: Required
+
+        - fromFieldPath: spec.parameters.nodes.lowCostSpotNodes.minCount
+          toFieldPath: spec.forProvider.scalingConfig.minSize
+        - fromFieldPath: spec.parameters.nodes.lowCostSpotNodes.maxCount
+          toFieldPath: spec.forProvider.scalingConfig.maxSize
+
+        - fromFieldPath: spec.parameters.networkRef.id
+          toFieldPath: spec.forProvider.subnetSelector.matchLabels[networks.aws.crossplane.upsider.dev/network-id]
+
+        # Additional Data
+        - fromFieldPath: spec.id
+          toFieldPath: spec.forProvider.tags.CrossplaneID
+
+        # Status handling
+        - type: ToCompositeFieldPath
+          fromFieldPath: status.atProvider.status
+          toFieldPath: status.nodePoolStatus
+      readinessChecks:
+        - type: MatchString
+          fieldPath: status.atProvider.status
+          matchString: ACTIVE
+    - name: node-group-high-memory
+      base:
+        apiVersion: eks.aws.crossplane.io/v1alpha1
+        kind: NodeGroup
+        spec:
+          forProvider:
+            amiType: BOTTLEROCKET_x86_64
+            clusterNameSelector:
+              matchControllerRef: true
+            nodeRoleSelector:
+              matchControllerRef: true
+              matchLabels:
+                role: nodegroup
+            subnetSelector:
+              matchLabels:
+                access: public
+            tags:
+              managed-by: Crossplane
+              CrossplaneID: unknown # To be overridden
+            capacityType: ON_DEMAND
+            instanceTypes:
+              - r6i.large
+            scalingConfig:
+              minSize: 0
+              maxSize: 1
+              # Based on https://github.com/crossplane-contrib/provider-aws/pull/502,
+              # we shouldn't provide any desiredSize when using cluster autoscaling etc.
+              # desiredSize: 0
+
+      patches:
+        - type: PatchSet
+          patchSetName: preventDeletion
+
+        - fromFieldPath: spec.id
+          toFieldPath: metadata.annotations[crossplane.io/external-name]
+          transforms:
+            - type: string
+              string:
+                fmt: "%s-high-memory"
+
+        - fromFieldPath: spec.providerConfigRef
+          toFieldPath: spec.providerConfigRef.name
+        - fromFieldPath: spec.parameters.region
+          toFieldPath: spec.forProvider.region
+        - fromFieldPath: spec.parameters.minVersion
+          toFieldPath: spec.forProvider.version
+          policy:
+            fromFieldPath: Required
+
+        - fromFieldPath: spec.parameters.nodes.highMemoryNodes.minCount
+          toFieldPath: spec.forProvider.scalingConfig.minSize
+        - fromFieldPath: spec.parameters.nodes.highMemoryNodes.maxCount
+          toFieldPath: spec.forProvider.scalingConfig.maxSize
+
+        - fromFieldPath: spec.parameters.networkRef.id
+          toFieldPath: spec.forProvider.subnetSelector.matchLabels[networks.aws.crossplane.upsider.dev/network-id]
+
+        # Additional Data
+        - fromFieldPath: spec.id
+          toFieldPath: spec.forProvider.tags.CrossplaneID
+
+        # Status handling
+        - type: ToCompositeFieldPath
+          fromFieldPath: status.atProvider.status
+          toFieldPath: status.nodePoolStatus
+      readinessChecks:
+        - type: MatchString
+          fieldPath: status.atProvider.status
+          matchString: ACTIVE
+    - name: node-group-high-cpu
+      base:
+        apiVersion: eks.aws.crossplane.io/v1alpha1
+        kind: NodeGroup
+        spec:
+          forProvider:
+            amiType: BOTTLEROCKET_x86_64
+            clusterNameSelector:
+              matchControllerRef: true
+            nodeRoleSelector:
+              matchControllerRef: true
+              matchLabels:
+                role: nodegroup
+            subnetSelector:
+              matchLabels:
+                access: public
+            tags:
+              managed-by: Crossplane
+              CrossplaneID: unknown # To be overridden
+            capacityType: ON_DEMAND
+            instanceTypes:
+              - c6i.large
+            scalingConfig:
+              minSize: 0
+              maxSize: 1
+              # Based on https://github.com/crossplane-contrib/provider-aws/pull/502,
+              # we shouldn't provide any desiredSize when using cluster autoscaling etc.
+              # desiredSize: 0
+
+      patches:
+        - type: PatchSet
+          patchSetName: preventDeletion
+
+        - fromFieldPath: spec.id
+          toFieldPath: metadata.annotations[crossplane.io/external-name]
+          transforms:
+            - type: string
+              string:
+                fmt: "%s-high-cpu"
+
+        - fromFieldPath: spec.providerConfigRef
+          toFieldPath: spec.providerConfigRef.name
+        - fromFieldPath: spec.parameters.region
+          toFieldPath: spec.forProvider.region
+        - fromFieldPath: spec.parameters.minVersion
+          toFieldPath: spec.forProvider.version
+          policy:
+            fromFieldPath: Required
+
+        - fromFieldPath: spec.parameters.nodes.highCpuNodes.minCount
+          toFieldPath: spec.forProvider.scalingConfig.minSize
+        - fromFieldPath: spec.parameters.nodes.highCpuNodes.maxCount
+          toFieldPath: spec.forProvider.scalingConfig.maxSize
+
+        - fromFieldPath: spec.parameters.networkRef.id
+          toFieldPath: spec.forProvider.subnetSelector.matchLabels[networks.aws.crossplane.upsider.dev/network-id]
+
+        # Additional Data
+        - fromFieldPath: spec.id
+          toFieldPath: spec.forProvider.tags.CrossplaneID
+
+        # Status handling
+        - type: ToCompositeFieldPath
+          fromFieldPath: status.atProvider.status
+          toFieldPath: status.nodePoolStatus
+      readinessChecks:
+        - type: MatchString
+          fieldPath: status.atProvider.status
+          matchString: ACTIVE
+
+    # EKS Addons
+    - name: addon-vpc-cni
+      base:
+        apiVersion: eks.aws.crossplane.io/v1alpha1
+        kind: Addon
+        spec:
+          forProvider:
+            addonName: vpc-cni
+            clusterNameSelector:
+              matchControllerRef: true
+            tags:
+              managed-by: Crossplane
+              CrossplaneID: unknown # To be overridden
+      patches:
+        - type: PatchSet
+          patchSetName: preventDeletion
+
+        - fromFieldPath: spec.providerConfigRef
+          toFieldPath: spec.providerConfigRef.name
+        - fromFieldPath: spec.parameters.region
+          toFieldPath: spec.forProvider.region
+          policy:
+            fromFieldPath: Required
+
+        # Additional Data
+        - fromFieldPath: spec.id
+          toFieldPath: spec.forProvider.tags.CrossplaneID
+    - name: addon-coredns
+      base:
+        apiVersion: eks.aws.crossplane.io/v1alpha1
+        kind: Addon
+        spec:
+          forProvider:
+            addonName: coredns
+            clusterNameSelector:
+              matchControllerRef: true
+            tags:
+              managed-by: Crossplane
+              CrossplaneID: unknown # To be overridden
+      patches:
+        - type: PatchSet
+          patchSetName: preventDeletion
+
+        - fromFieldPath: spec.providerConfigRef
+          toFieldPath: spec.providerConfigRef.name
+        - fromFieldPath: spec.parameters.region
+          toFieldPath: spec.forProvider.region
+          policy:
+            fromFieldPath: Required
+
+        # Additional Data
+        - fromFieldPath: spec.id
+          toFieldPath: spec.forProvider.tags.CrossplaneID
+    - name: addon-ebs-csi
+      base:
+        apiVersion: eks.aws.crossplane.io/v1alpha1
+        kind: Addon
+        spec:
+          forProvider:
+            addonName: aws-ebs-csi-driver
+            clusterNameSelector:
+              matchControllerRef: true
+            tags:
+              managed-by: Crossplane
+              CrossplaneID: unknown # To be overridden
+      patches:
+        - type: PatchSet
+          patchSetName: preventDeletion
+
+        - fromFieldPath: spec.providerConfigRef
+          toFieldPath: spec.providerConfigRef.name
+        - fromFieldPath: spec.parameters.region
+          toFieldPath: spec.forProvider.region
+          policy:
+            fromFieldPath: Required
+
+        # Additional Data
+        - fromFieldPath: spec.id
+          toFieldPath: spec.forProvider.tags.CrossplaneID
+
+    # ALB Setup
+    - name: iam-role-for-alb-controller
+      base:
+        apiVersion: iam.aws.crossplane.io/v1beta1
+        kind: Role
+        metadata:
+          labels:
+            usage: alb-controller
+        spec:
+          forProvider:
+            assumeRolePolicyDocument: |
+              {
+                  "Version": "2012-10-17",
+                  "Statement": [
+                      {
+                          "Effect": "Allow",
+                          "Principal": {
+                              "Service": "ec2.amazonaws.com"
+                          },
+                          "Action": "sts:AssumeRole"
+                      }
+                  ]
+              }
+            # tags:
+            #   - key: Managed-by
+            #     value: Crossplane
+            #   - key: CrossplaneID
+            #     value: unknown # To be overridden
+      patches:
+        - fromFieldPath: spec.id
+          toFieldPath: metadata.name
+          transforms:
+            - type: string
+              string:
+                fmt: "%s-role-for-alb-controller"
+        - type: PatchSet
+          patchSetName: preventDeletion
+
+        - fromFieldPath: spec.providerConfigRef
+          toFieldPath: spec.providerConfigRef.name
+        - fromFieldPath: spec.id
+          toFieldPath: metadata.annotations[crossplane.io/external-name]
+          transforms:
+            - type: string
+              string:
+                fmt: "%s-role-for-alb-controller"
+
+        # # Additional Data
+        # - fromFieldPath: spec.id
+        #   toFieldPath: spec.forProvider.tags[1].value
+    - name: iam-policy-for-alb-controller
+      base:
+        apiVersion: iam.aws.crossplane.io/v1beta1
+        kind: Policy
+        metadata:
+          labels:
+            usage: alb-controller
+        spec:
+          forProvider:
+            name: ALBControllerPolicy
+      patches:
+        - fromFieldPath: spec.id
+          toFieldPath: metadata.name
+          transforms:
+            - type: string
+              string:
+                fmt: "%s-policy-for-alb-controller"
+        - type: PatchSet
+          patchSetName: preventDeletion
+
+        - fromFieldPath: spec.providerConfigRef
+          toFieldPath: spec.providerConfigRef.name
+
+        - fromFieldPath: spec.id
+          toFieldPath: spec.forProvider.document
+          transforms:
+            - type: string
+              string:
+                fmt: |
+                  {
+                      "Version": "2012-10-17",
+                      "Statement": [
+                          {
+                              "Effect": "Allow",
+                              "Action": [
+                                  "ec2:AuthorizeSecurityGroupIngress",
+                                  "ec2:RevokeSecurityGroupIngress"
+                              ],
+                              "Resource": "*",
+                              "Condition": {
+                                  "Null": {
+                                      "aws:ResourceTag/kubernetes.io/cluster/%s": "false"
+                                  }
+                              }
+                          }
+                      ]
+                  }
+    - name: iam-role-policy-attachment-for-alb-controller
+      base:
+        apiVersion: iam.aws.crossplane.io/v1beta1
+        kind: RolePolicyAttachment
+        spec:
+          forProvider:
+            policyArn: arn:aws:iam::aws:policy/ALBControllerPolicy
+            roleNameSelector:
+              matchControllerRef: true
+              matchLabels:
+                role: nodegroup
+      patches:
+        - type: PatchSet
+          patchSetName: preventDeletion
+
+        - fromFieldPath: spec.providerConfigRef
+          toFieldPath: spec.providerConfigRef.name
+
+        - fromFieldPath: metadata.annotations[iam.crossplane.io/account]
+          toFieldPath: spec.forProvider.policyArn
+          transforms:
+            - type: string
+              string:
+                fmt: "arn:aws:iam::%s:policy/ALBControllerPolicy"
+
+    # Configure Kubernetes using Kubernetes Provider
+    - name: kubernetes-provider-config
+      base:
+        apiVersion: kubernetes.crossplane.io/v1alpha1
+        kind: ProviderConfig
+        spec:
+          credentials:
+            source: Secret
+            secretRef:
+              key: kubeconfig
+      patches:
+        - fromFieldPath: spec.id
+          toFieldPath: metadata.name
+
+        - fromFieldPath: spec.writeConnectionSecretToRef.name
+          toFieldPath: spec.credentials.secretRef.name
+          transforms:
+            - type: string
+              string:
+                fmt: "%s-ekscluster"
+        - fromFieldPath: spec.writeConnectionSecretToRef.namespace
+          toFieldPath: spec.credentials.secretRef.namespace
+      readinessChecks:
+        - type: None
+    # Adjust aws-auth ConfigMap for access handling
+    - name: aws-auth-configmap
+      base:
+        apiVersion: kubernetes.crossplane.io/v1alpha1
+        kind: Object
+        spec:
+          forProvider:
+            manifest:
+              apiVersion: v1
+              kind: ConfigMap
+              metadata:
+                name: aws-auth
+                namespace: kube-system
+      patches:
+        - fromFieldPath: spec.id
+          toFieldPath: metadata.name
+          transforms:
+            - type: string
+              string:
+                fmt: "%s-eks-aws-auth"
+        - type: PatchSet
+          patchSetName: preventDeletion
+
+        - type: CombineFromComposite
+          combine:
+            strategy: string
+            variables:
+              - fromFieldPath: metadata.annotations[iam.crossplane.io/account]
+              - fromFieldPath: spec.id
+              - fromFieldPath: metadata.annotations[iam.crossplane.io/account]
+              - fromFieldPath: metadata.annotations[iam.crossplane.io/sso-admin-role-name]
+              - fromFieldPath: metadata.annotations[iam.crossplane.io/sso-admin-role-name]
+              # TODO: Add more roles for access
+            string:
+              fmt: |
+                - rolearn: arn:aws:iam::%s:role/%s-role-for-node-group
+                  username: system:node:{{EC2PrivateDNSName}}
+                  groups:
+                  - system:bootstrappers
+                  - system:nodes
+                - rolearn: arn:aws:iam::%s:role/%s
+                  username: %s:{{SessionName}}
+                  groups:
+                  - system:masters
+          toFieldPath: spec.forProvider.manifest.data.mapRoles
+          policy:
+            fromFieldPath: Optional
+
+        - fromFieldPath: spec.id
+          toFieldPath: spec.providerConfigRef.name
+    - name: aws-loadbalancer-controller-service-account
+      base:
+        apiVersion: kubernetes.crossplane.io/v1alpha1
+        kind: Object
+        spec:
+          forProvider:
+            manifest:
+              apiVersion: v1
+              kind: ServiceAccount
+              metadata:
+                name: aws-load-balancer-controller
+                namespace: kube-system
+      patches:
+        - fromFieldPath: spec.id
+          toFieldPath: metadata.name
+          transforms:
+            - type: string
+              string:
+                fmt: "%s-alb-controller-sa"
+        - type: PatchSet
+          patchSetName: preventDeletion
+
+        - fromFieldPath: spec.id
+          toFieldPath: spec.providerConfigRef.name
+        - fromFieldPath: metadata.annotations[iam.crossplane.io/account]
+          toFieldPath: spec.forProvider.manifest.metadata.annotations[eks.amazonaws.com/role-arn]
+          transforms:
+            - type: string
+              string:
+                fmt: "arn:aws:iam::%s:role/aws-load-balancer-controller"

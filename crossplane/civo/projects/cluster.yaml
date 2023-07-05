@@ -1,0 +1,23 @@
+apiVersion: civo.upbound.io/v1alpha1
+kind: CivoKubernetesCluster
+metadata:
+  name: crossplane-example-cluster
+spec:
+  forProvider:
+    name: crossplane-example-cluster
+    firewallIdRef:
+      name: k8s-firewall
+    networkIdRef:
+      name: crossplane-example-network
+    pools:
+      - label: "node-pool"
+        nodeCount: 3
+        size: g3.k3s.small
+    applications: "kubernetes-dashboard"
+    tags: "owner:crossplane agent:provider-civo-upjet env:stage"
+    kubernetesVersion: "1.23.6-k3s1"
+  providerConfigRef:
+    name: provider-civo
+  writeConnectionSecretToRef:
+    name: crossplane-example-cluster-kubeconfig
+    namespace: crossplane-system

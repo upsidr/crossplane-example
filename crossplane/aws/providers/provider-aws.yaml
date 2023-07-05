@@ -1,0 +1,26 @@
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-aws
+  # For Argo CD
+  # annotations:
+  #   argocd.argoproj.io/sync-wave: "-1"
+spec:
+  package: crossplane/provider-aws:v0.41.1
+  controllerConfigRef:
+    name: aws-config
+---
+apiVersion: pkg.crossplane.io/v1alpha1
+kind: ControllerConfig
+metadata:
+  name: aws-config
+  # annotations:
+  #   eks.amazonaws.com/role-arn: arn:aws:iam::999999999999:role/Crossplane_Admin_Access
+  #   # For Argo CD
+  #   # argocd.argoproj.io/sync-wave: "-1"
+spec:
+  args:
+    - --debug
+  podSecurityContext:
+    fsGroup: 2000

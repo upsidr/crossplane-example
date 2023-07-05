@@ -1,0 +1,44 @@
+apiVersion: civo.upbound.io/v1alpha1
+kind: CivoFirewall
+metadata:
+  name: k8s-firewall
+spec:
+  forProvider:
+    networkIdRef:
+      name: crossplane-example-network
+    name: "k8s-firewall"
+    createDefaultRules: true
+    ingressRule:
+      - protocol: "tcp"
+        portRange: "6443"
+        cidr: ["0.0.0.0/0"]
+        label: "kubernetes-api-server"
+        action: "allow"
+      - protocol: "tcp"
+        portRange: "443"
+        cidr: ["0.0.0.0/0"]
+        label: "https"
+        action: "allow"
+      - protocol: "tcp"
+        portRange: "1-65535"
+        cidr: ["10.0.0.0/8"]
+        label: "internal"
+        action: "allow"
+      - protocol: "tcp"
+        portRange: "80"
+        cidr: ["0.0.0.0/0"]
+        label: "http"
+        action: "allow"
+      - protocol: "udp"
+        portRange: "123"
+        cidr: ["0.0.0.0/0"]
+        label: "ntp"
+        action: "allow"
+    egressRule:
+      - label: "all"
+        protocol: "tcp"
+        portRange: "1-65535"
+        cidr: ["0.0.0.0/0"]
+        action: "allow"
+  providerConfigRef:
+    name: provider-civo

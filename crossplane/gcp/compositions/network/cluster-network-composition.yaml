@@ -1,0 +1,135 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: xclusternetwork-gcp
+  labels:
+    crossplane.io/xrd: xclusternetworks.gcp.crossplane.upsider.dev
+    provider: GCP
+spec:
+  compositeTypeRef:
+    apiVersion: gcp.crossplane.upsider.dev/v1alpha1
+    kind: XClusterNetwork
+  patchSets:
+    - name: name
+      patches:
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.id
+          toFieldPath: metadata.name
+    - name: prevent-deletion
+      patches:
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.preventDeletion
+          toFieldPath: spec.deletionPolicy
+          transforms:
+            - type: convert
+              convert:
+                toType: string
+            - type: map
+              map:
+                "true": Orphan
+                "false": Delete
+    - name: label-project-id
+      patches:
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.parameters.projectId
+          toFieldPath: metadata.labels[gcp.crossplane.upsider.dev/project-id]
+    - name: provider-config-ref
+      patches:
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.providerConfigRef
+          toFieldPath: spec.providerConfigRef.name
+  resources:
+    - name: network
+      base:
+        apiVersion: compute.gcp.upbound.io/v1beta1
+        kind: Network
+        spec:
+          forProvider:
+            autoCreateSubnetworks: false
+      patches:
+        - type: PatchSet
+          patchSetName: name
+        - type: PatchSet
+          patchSetName: prevent-deletion
+        - type: PatchSet
+          patchSetName: label-project-id
+        - type: PatchSet
+          patchSetName: provider-config-ref
+    - name: subnetwork
+      base:
+        apiVersion: compute.gcp.upbound.io/v1beta1
+        kind: Subnetwork
+        spec:
+          forProvider:
+            secondaryIpRange:
+              - rangeName: pods
+              - rangeName: services
+      patches:
+        - type: PatchSet
+          patchSetName: name
+        - type: PatchSet
+          patchSetName: prevent-deletion
+        - type: PatchSet
+          patchSetName: label-project-id
+        - type: PatchSet
+          patchSetName: provider-config-ref
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.parameters.region
+          toFieldPath: spec.forProvider.region
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.id
+          toFieldPath: spec.forProvider.networkRef.name
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.parameters.cidrs.nodes
+          toFieldPath: spec.forProvider.ipCidrRange
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.parameters.cidrs.pods
+          toFieldPath: spec.forProvider.secondaryIpRange[0].ipCidrRange
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.parameters.cidrs.services
+          toFieldPath: spec.forProvider.secondaryIpRange[1].ipCidrRange
+    - name: router
+      base:
+        apiVersion: compute.gcp.upbound.io/v1beta1
+        kind: Router
+      patches:
+        - type: PatchSet
+          patchSetName: name
+        - type: PatchSet
+          patchSetName: prevent-deletion
+        - type: PatchSet
+          patchSetName: label-project-id
+        - type: PatchSet
+          patchSetName: provider-config-ref
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.parameters.region
+          toFieldPath: spec.forProvider.region
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.id
+          toFieldPath: spec.forProvider.networkRef.name
+    - name: router-nat
+      base:
+        apiVersion: compute.gcp.upbound.io/v1beta1
+        kind: RouterNAT
+        spec:
+          forProvider:
+            natIpAllocateOption: AUTO_ONLY
+            sourceSubnetworkIpRangesToNat: ALL_SUBNETWORKS_ALL_IP_RANGES
+            logConfig:
+              - enable: true
+                filter: ALL
+      patches:
+        - type: PatchSet
+          patchSetName: name
+        - type: PatchSet
+          patchSetName: prevent-deletion
+        - type: PatchSet
+          patchSetName: label-project-id
+        - type: PatchSet
+          patchSetName: provider-config-ref
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.parameters.region
+          toFieldPath: spec.forProvider.region
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.id
+          toFieldPath: spec.forProvider.routerRef.name

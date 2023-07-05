@@ -1,0 +1,60 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositeResourceDefinition
+metadata:
+  name: xstandardbuckets.crossplane.upsider.dev 
+spec:
+  group: crossplane.upsider.dev
+  claimNames:
+    kind: StandardBucket
+    plural: standardbuckets
+  names:
+    kind: XStandardBucket
+    plural: xstandardbuckets
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                preventDeletion:
+                  type: boolean
+                  default: false
+                  description: When set to true, it prevents deleting the remote resources.
+                providerConfigRef:
+                  type: string
+                  description: ProviderConfig reference to be used.
+                objectLockEnabledForBucket:
+                  type: boolean
+                  default: true
+                  description: Specifies whether you want S3 Object Lock to be enabled for the new bucket.
+                region:
+                  type: string
+                  description: Specifies accessible bucket.
+                oidcProvider:
+                  type: object
+                  properties:
+                    arn:
+                      type: string
+                      description: Specifies OIDC provider ARN.
+                    resourceName:
+                      type: string
+                      description: Specifies OIDC provider resource name.
+                  required:
+                    - arn
+                    - resourceName
+                irsa:
+                  type: object
+                  properties:
+                    namespace:
+                      type: string
+                      description: Specifies namespace of service account.
+                  required:
+                    - namespace
+          required:
+            - providerConfigRef
+            - region

@@ -1,0 +1,87 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: xprojectiammember-gcp
+  labels:
+    crossplane.io/xrd: xprojectiammembers.gcp.crossplane.upsider.dev
+    provider: GCP
+spec:
+  compositeTypeRef:
+    apiVersion: gcp.crossplane.upsider.dev/v1alpha1
+    kind: XProjectIAMMember
+  patchSets:
+    - name: name
+      patches:
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.id
+          toFieldPath: metadata.name
+    - name: prevent-deletion
+      patches:
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.preventDeletion
+          toFieldPath: spec.deletionPolicy
+          transforms:
+            - type: convert
+              convert:
+                toType: string
+            - type: map
+              map:
+                "true": Orphan
+                "false": Delete
+    - name: provider-config-ref
+      patches:
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.parameters.project
+          toFieldPath: spec.providerConfigRef.name
+    - name: project
+      patches:
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.parameters.project
+          toFieldPath: spec.forProvider.project
+  resources:
+    - name: project-iam-member
+      base:
+        apiVersion: cloudplatform.gcp.upbound.io/v1beta1
+        kind: ProjectIAMMember
+        spec:
+          forProvider: {}
+      patches:
+        - type: PatchSet
+          patchSetName: name
+        - type: PatchSet
+          patchSetName: prevent-deletion
+        - type: PatchSet
+          patchSetName: provider-config-ref
+        - type: PatchSet
+          patchSetName: project
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.parameters.role
+          toFieldPath: spec.forProvider.role
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.parameters.user
+          toFieldPath: spec.forProvider.member
+          transforms:
+            - type: string
+              string:
+                fmt: "user:%s"
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.parameters.serviceAccount
+          toFieldPath: spec.forProvider.member
+          transforms:
+            - type: string
+              string:
+                fmt: "serviceAccount:%s"
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.parameters.group
+          toFieldPath: spec.forProvider.member
+          transforms:
+            - type: string
+              string:
+                fmt: "group:%s"
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.parameters.domain
+          toFieldPath: spec.forProvider.member
+          transforms:
+            - type: string
+              string:
+                fmt: "domain:%s"

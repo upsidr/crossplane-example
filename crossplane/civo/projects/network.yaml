@@ -1,0 +1,9 @@
+apiVersion: civo.upbound.io/v1alpha1
+kind: CivoNetwork
+metadata:
+  name: crossplane-example-network
+spec:
+  forProvider:
+    label: crossplane-example-network
+  providerConfigRef:
+    name: provider-civo

@@ -1,0 +1,25 @@
+---
+apiVersion: pkg.crossplane.io/v1alpha1
+kind: ControllerConfig
+metadata:
+  name: kubernetes-config
+  # For Argo CD
+  # annotations:
+  #   argocd.argoproj.io/sync-wave: "2"
+spec:
+  args:
+    - --debug
+  podSecurityContext:
+    fsGroup: 2000
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-kubernetes
+  # For Argo CD
+  # annotations:
+  #   argocd.argoproj.io/sync-wave: "2"
+spec:
+  package: crossplane/provider-kubernetes:v0.3.0
+  controllerConfigRef:
+    name: kubernetes-config

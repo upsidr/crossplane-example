@@ -1,0 +1,1108 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: xstandardnetwork-aws
+  labels:
+    crossplane.io/xrd: xstandardnetwork.aws.crossplane.upsider.dev
+    provider: AWS
+spec:
+  compositeTypeRef:
+    apiVersion: aws.crossplane.upsider.dev/v1alpha1
+    kind: XStandardNetwork
+  writeConnectionSecretsToNamespace: crossplane-system
+  patchSets:
+    - name: preventDeletion
+      patches:
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.useExistingNetwork.preventDeletion
+          toFieldPath: spec.deletionPolicy
+          transforms:
+            - type: convert
+              convert:
+                toType: string
+            - type: map
+              map:
+                "true": Orphan
+                "false": Delete
+  resources:
+    # Some fields added on top of the base setup reference here:
+    # https://github.com/upbound/platform-ref-multi-k8s/tree/main/examples
+    - name: vpc
+      base:
+        apiVersion: ec2.aws.crossplane.io/v1beta1
+        kind: VPC
+        spec:
+          forProvider:
+            # cidrBlock: TO BE PROVIDED BY PATCH BELOW
+            enableDnsSupport: true
+            enableDnsHostNames: true
+            tags:
+              - key: Managed-by
+                value: Crossplane
+              - key: CrossplaneID
+                value: unknown # To be overridden
+              - key: Name
+                value: unknown # To be overridden
+      patches:
+        - fromFieldPath: spec.id
+          toFieldPath: metadata.labels[networks.aws.crossplane.upsider.dev/network-id]
+        - type: PatchSet
+          patchSetName: preventDeletion
+
+        # If `useExistingNetwork` is specified, use the provided ID.
+        - fromFieldPath: spec.useExistingNetwork.vpcID
+          toFieldPath: metadata.annotations[crossplane.io/external-name]
+
+        - fromFieldPath: spec.providerConfigRef
+          toFieldPath: spec.providerConfigRef.name
+        - fromFieldPath: spec.cidrInput.vpcCIDR
+          toFieldPath: spec.forProvider.cidrBlock
+        - fromFieldPath: spec.region
+          toFieldPath: spec.forProvider.region
+
+        # Additional Data
+        - fromFieldPath: spec.id
+          toFieldPath: spec.forProvider.tags[1].value
+        - fromFieldPath: spec.id
+          toFieldPath: spec.forProvider.tags[2].value
+    - name: internet-gateway
+      base:
+        apiVersion: ec2.aws.crossplane.io/v1beta1
+        kind: InternetGateway
+        spec:
+          forProvider:
+            vpcIdSelector:
+              matchControllerRef: true
+            tags:
+              - key: Managed-by
+                value: Crossplane
+              - key: CrossplaneID
+                value: unknown # To be overridden
+              - key: Name
+                value: unknown # To be overridden
+      patches:
+        - fromFieldPath: spec.id
+          toFieldPath: metadata.labels[networks.aws.crossplane.upsider.dev/network-id]
+        - type: PatchSet
+          patchSetName: preventDeletion
+
+        # If `useExistingNetwork` is specified, use the provided ID.
+        - fromFieldPath: spec.useExistingNetwork.internetGatewayID
+          toFieldPath: metadata.annotations[crossplane.io/external-name]
+
+        - fromFieldPath: spec.providerConfigRef
+          toFieldPath: spec.providerConfigRef.name
+        - fromFieldPath: spec.region
+          toFieldPath: spec.forProvider.region
+
+        # Additional Data
+        - fromFieldPath: spec.id
+          toFieldPath: spec.forProvider.tags[1].value
+        - fromFieldPath: spec.id
+          toFieldPath: spec.forProvider.tags[2].value
+    - name: route-table-public
+      base:
+        apiVersion: ec2.aws.crossplane.io/v1beta1
+        kind: RouteTable
+        spec:
+          forProvider:
+            vpcIdSelector:
+              matchControllerRef: true
+            routes:
+              - destinationCidrBlock: 0.0.0.0/0
+                gatewayIdSelector:
+                  matchControllerRef: true
+            associations:
+              - subnetIdSelector:
+                  matchControllerRef: true
+                  matchLabels:
+                    access: public
+              - subnetIdSelector:
+                  matchControllerRef: true
+                  matchLabels:
+                    access: public
+              - subnetIdSelector:
+                  matchControllerRef: true
+                  matchLabels:
+                    access: public
+            tags:
+              - key: Name
+                value: unknown # To be overridden
+      patches:
+        - fromFieldPath: spec.id
+          toFieldPath: metadata.labels[networks.aws.crossplane.upsider.dev/network-id]
+        - type: PatchSet
+          patchSetName: preventDeletion
+
+        # If `useExistingNetwork` is specified, use the provided ID.
+        - fromFieldPath: spec.useExistingNetwork.publicRouteTableID
+          toFieldPath: metadata.annotations[crossplane.io/external-name]
+
+        - fromFieldPath: spec.providerConfigRef
+          toFieldPath: spec.providerConfigRef.name
+        - fromFieldPath: spec.region
+          toFieldPath: spec.forProvider.region
+        - fromFieldPath: spec.region
+          toFieldPath: spec.forProvider.associations[0].subnetIdSelector.matchLabels.zone
+          transforms:
+            - type: map
+              map:
+                # == import: rtpub-1 / begin from: ../../_templates/region-to-zone-mapping.yaml#[zone-1] indent: align ==
+                ap-northeast-1: ap-northeast-1a # Tokyo
+                ap-northeast-3: ap-northeast-3a # Osaka
+                eu-west-2: eu-west-2a # London
+                us-west-2: us-west-2a # Oregon
+                us-east-1: us-east-1a # Virginia
+                # == import: rtpub-1 / end ==
+        - fromFieldPath: spec.region
+          toFieldPath: spec.forProvider.associations[1].subnetIdSelector.matchLabels.zone
+          transforms:
+            - type: map
+              map:
+                # == import: rtpub-2 / begin from: ../../_templates/region-to-zone-mapping.yaml#[zone-2] indent: align ==
+                ap-northeast-1: ap-northeast-1c # Tokyo
+                ap-northeast-3: ap-northeast-3b # Osaka
+                eu-west-2: eu-west-2b # London
+                us-west-2: us-west-2b # Oregon
+                us-east-1: us-east-1b # Virginia
+                # == import: rtpub-2 / end ==
+        - fromFieldPath: spec.region
+          toFieldPath: spec.forProvider.associations[2].subnetIdSelector.matchLabels.zone
+          transforms:
+            - type: map
+              map:
+                # == import: rtpub-3 / begin from: ../../_templates/region-to-zone-mapping.yaml#[zone-3] indent: align ==
+                ap-northeast-1: ap-northeast-1d # Tokyo
+                ap-northeast-3: ap-northeast-3c # Osaka
+                eu-west-2: eu-west-2c # London
+                us-west-2: us-west-2c # Oregon
+                us-east-1: us-east-1c # Virginia
+                # == import: rtpub-3 / end ==
+
+        # Additional Data
+        - fromFieldPath: spec.id
+          toFieldPath: spec.forProvider.tags[0].value
+          transforms:
+            - type: string
+              string:
+                fmt: "%s-public-route-table"
+    - name: subnet-1
+      base:
+        apiVersion: ec2.aws.crossplane.io/v1beta1
+        kind: Subnet
+        metadata:
+          labels:
+            access: public
+        spec:
+          forProvider:
+            mapPublicIPOnLaunch: true
+            # cidrBlock: TO BE PROVIDED BY PATCH BELOW
+            vpcIdSelector:
+              matchControllerRef: true
+            tags:
+              - key: Managed-by
+                value: Crossplane
+              - key: CrossplaneID
+                value: unknown # To be overridden
+              - key: Name
+                value: unknown # To be overridden
+              - key: kubernetes.io/role/elb
+                value: "1"
+      patches:
+        - fromFieldPath: spec.id
+          toFieldPath: metadata.labels[networks.aws.crossplane.upsider.dev/network-id]
+        - type: PatchSet
+          patchSetName: preventDeletion
+
+        # If `useExistingNetwork` is specified, use the provided ID.
+        - fromFieldPath: spec.useExistingNetwork.subnet-1
+          toFieldPath: metadata.annotations[crossplane.io/external-name]
+
+        - fromFieldPath: spec.providerConfigRef
+          toFieldPath: spec.providerConfigRef.name
+        - fromFieldPath: spec.cidrInput.subnetCIDR-1
+          toFieldPath: spec.forProvider.cidrBlock
+        - fromFieldPath: spec.region
+          toFieldPath: spec.forProvider.region
+        - fromFieldPath: spec.region
+          toFieldPath: spec.forProvider.availabilityZone
+          transforms:
+            - type: map
+              map:
+                # == import: s-az-1 / begin from: ../../_templates/region-to-zone-mapping.yaml#[zone-1] indent: align ==
+                ap-northeast-1: ap-northeast-1a # Tokyo
+                ap-northeast-3: ap-northeast-3a # Osaka
+                eu-west-2: eu-west-2a # London
+                us-west-2: us-west-2a # Oregon
+                us-east-1: us-east-1a # Virginia
+                # == import: s-az-1 / end ==
+          policy:
+            fromFieldPath: Required
+        - fromFieldPath: spec.region
+          toFieldPath: metadata.labels.zone
+          transforms:
+            - type: map
+              map:
+                # == import: s-z-1 / begin from: ../../_templates/region-to-zone-mapping.yaml#[zone-1] indent: align ==
+                ap-northeast-1: ap-northeast-1a # Tokyo
+                ap-northeast-3: ap-northeast-3a # Osaka
+                eu-west-2: eu-west-2a # London
+                us-west-2: us-west-2a # Oregon
+                us-east-1: us-east-1a # Virginia
+                # == import: s-z-1 / end ==
+          policy:
+            fromFieldPath: Required
+
+        # Additional Data
+        - fromFieldPath: spec.id
+          toFieldPath: spec.forProvider.tags[1].value
+        - fromFieldPath: spec.id
+          toFieldPath: spec.forProvider.tags[2].value
+          transforms:
+            - type: string
+              string:
+                fmt: "%s-subnet-1"
+    - name: subnet-2
+      base:
+        apiVersion: ec2.aws.crossplane.io/v1beta1
+        kind: Subnet
+        metadata:
+          labels:
+            access: public
+        spec:
+          forProvider:
+            mapPublicIPOnLaunch: true
+            # cidrBlock: TO BE PROVIDED BY PATCH BELOW
+            vpcIdSelector:
+              matchControllerRef: true
+            # availabilityZone: us-west-2b
+            tags:
+              - key: Managed-by
+                value: Crossplane
+              - key: CrossplaneID
+                value: unknown # To be overridden
+              - key: Name
+                value: unknown # To be overridden
+              - key: kubernetes.io/role/elb
+                value: "1"
+      patches:
+        - fromFieldPath: spec.id
+          toFieldPath: metadata.labels[networks.aws.crossplane.upsider.dev/network-id]
+        - type: PatchSet
+          patchSetName: preventDeletion
+
+        # If `useExistingNetwork` is specified, use the provided ID.
+        - fromFieldPath: spec.useExistingNetwork.subnet-2
+          toFieldPath: metadata.annotations[crossplane.io/external-name]
+
+        - fromFieldPath: spec.providerConfigRef
+          toFieldPath: spec.providerConfigRef.name
+        - fromFieldPath: spec.cidrInput.subnetCIDR-2
+          toFieldPath: spec.forProvider.cidrBlock
+        - fromFieldPath: spec.region
+          toFieldPath: spec.forProvider.region
+        - fromFieldPath: spec.region
+          toFieldPath: spec.forProvider.availabilityZone
+          transforms:
+            - type: map
+              map:
+                # == import: s-az-2 / begin from: ../../_templates/region-to-zone-mapping.yaml#[zone-2] indent: align ==
+                ap-northeast-1: ap-northeast-1c # Tokyo
+                ap-northeast-3: ap-northeast-3b # Osaka
+                eu-west-2: eu-west-2b # London
+                us-west-2: us-west-2b # Oregon
+                us-east-1: us-east-1b # Virginia
+                # == import: s-az-2 / end ==
+          policy:
+            fromFieldPath: Required
+        - fromFieldPath: spec.region
+          toFieldPath: metadata.labels.zone
+          transforms:
+            - type: map
+              map:
+                # == import: s-z-2 / begin from: ../../_templates/region-to-zone-mapping.yaml#[zone-2] indent: align ==
+                ap-northeast-1: ap-northeast-1c # Tokyo
+                ap-northeast-3: ap-northeast-3b # Osaka
+                eu-west-2: eu-west-2b # London
+                us-west-2: us-west-2b # Oregon
+                us-east-1: us-east-1b # Virginia
+                # == import: s-z-2 / end ==
+          policy:
+            fromFieldPath: Required
+
+        # Additional Data
+        - fromFieldPath: spec.id
+          toFieldPath: spec.forProvider.tags[1].value
+        - fromFieldPath: spec.id
+          toFieldPath: spec.forProvider.tags[2].value
+          transforms:
+            - type: string
+              string:
+                fmt: "%s-subnet-2"
+    - name: subnet-3
+      base:
+        apiVersion: ec2.aws.crossplane.io/v1beta1
+        kind: Subnet
+        metadata:
+          labels:
+            access: public
+        spec:
+          forProvider:
+            mapPublicIPOnLaunch: true
+            # cidrBlock: TO BE PROVIDED BY PATCH BELOW
+            vpcIdSelector:
+              matchControllerRef: true
+            # availabilityZone: us-west-2b
+            tags:
+              - key: Managed-by
+                value: Crossplane
+              - key: CrossplaneID
+                value: unknown # To be overridden
+              - key: Name
+                value: unknown # To be overridden
+              - key: kubernetes.io/role/elb
+                value: "1"
+      patches:
+        - fromFieldPath: spec.id
+          toFieldPath: metadata.labels[networks.aws.crossplane.upsider.dev/network-id]
+        - type: PatchSet
+          patchSetName: preventDeletion
+
+        # If `useExistingNetwork` is specified, use the provided ID.
+        - fromFieldPath: spec.useExistingNetwork.subnet-3
+          toFieldPath: metadata.annotations[crossplane.io/external-name]
+
+        - fromFieldPath: spec.providerConfigRef
+          toFieldPath: spec.providerConfigRef.name
+        - fromFieldPath: spec.cidrInput.subnetCIDR-3
+          toFieldPath: spec.forProvider.cidrBlock
+        - fromFieldPath: spec.region
+          toFieldPath: spec.forProvider.region
+        - fromFieldPath: spec.region
+          toFieldPath: spec.forProvider.availabilityZone
+          transforms:
+            - type: map
+              map:
+                # == import: s-az-3 / begin from: ../../_templates/region-to-zone-mapping.yaml#[zone-3] indent: align ==
+                ap-northeast-1: ap-northeast-1d # Tokyo
+                ap-northeast-3: ap-northeast-3c # Osaka
+                eu-west-2: eu-west-2c # London
+                us-west-2: us-west-2c # Oregon
+                us-east-1: us-east-1c # Virginia
+                # == import: s-az-3 / end ==
+          policy:
+            fromFieldPath: Required
+        - fromFieldPath: spec.region
+          toFieldPath: metadata.labels.zone
+          transforms:
+            - type: map
+              map:
+                # == import: s-z-3 / begin from: ../../_templates/region-to-zone-mapping.yaml#[zone-3] indent: align ==
+                ap-northeast-1: ap-northeast-1d # Tokyo
+                ap-northeast-3: ap-northeast-3c # Osaka
+                eu-west-2: eu-west-2c # London
+                us-west-2: us-west-2c # Oregon
+                us-east-1: us-east-1c # Virginia
+                # == import: s-z-3 / end ==
+          policy:
+            fromFieldPath: Required
+
+        # Additional Data
+        - fromFieldPath: spec.id
+          toFieldPath: spec.forProvider.tags[1].value
+        - fromFieldPath: spec.id
+          toFieldPath: spec.forProvider.tags[2].value
+          transforms:
+            - type: string
+              string:
+                fmt: "%s-subnet-3"
+    - name: private-subnet-1
+      base:
+        apiVersion: ec2.aws.crossplane.io/v1beta1
+        kind: Subnet
+        metadata:
+          labels:
+            access: private
+        spec:
+          forProvider:
+            # cidrBlock: TO BE PROVIDED BY PATCH BELOW
+            vpcIdSelector:
+              matchControllerRef: true
+            # availabilityZone: us-west-2a
+            tags:
+              - key: Managed-by
+                value: Crossplane
+              - key: CrossplaneID
+                value: unknown # To be overridden
+              - key: Name
+                value: unknown # To be overridden
+              - key: kubernetes.io/role/internal-elb
+                value: "1"
+      patches:
+        - fromFieldPath: spec.id
+          toFieldPath: metadata.labels[networks.aws.crossplane.upsider.dev/network-id]
+        - type: PatchSet
+          patchSetName: preventDeletion
+
+        # If `useExistingNetwork` is specified, use the provided ID.
+        - fromFieldPath: spec.useExistingNetwork.privateSubnet-1.subnetID
+          toFieldPath: metadata.annotations[crossplane.io/external-name]
+
+        - fromFieldPath: spec.providerConfigRef
+          toFieldPath: spec.providerConfigRef.name
+        - fromFieldPath: spec.cidrInput.privateSubnetCIDR-1
+          toFieldPath: spec.forProvider.cidrBlock
+        - fromFieldPath: spec.region
+          toFieldPath: spec.forProvider.region
+        - fromFieldPath: spec.region
+          toFieldPath: spec.forProvider.availabilityZone
+          transforms:
+            - type: map
+              map:
+                # == import: ps-az-1 / begin from: ../../_templates/region-to-zone-mapping.yaml#[zone-1] indent: align ==
+                ap-northeast-1: ap-northeast-1a # Tokyo
+                ap-northeast-3: ap-northeast-3a # Osaka
+                eu-west-2: eu-west-2a # London
+                us-west-2: us-west-2a # Oregon
+                us-east-1: us-east-1a # Virginia
+                # == import: ps-az-1 / end ==
+          policy:
+            fromFieldPath: Required
+        - fromFieldPath: spec.region
+          toFieldPath: metadata.labels.zone
+          transforms:
+            - type: map
+              map:
+                # == import: ps-z-1 / begin from: ../../_templates/region-to-zone-mapping.yaml#[zone-1] indent: align ==
+                ap-northeast-1: ap-northeast-1a # Tokyo
+                ap-northeast-3: ap-northeast-3a # Osaka
+                eu-west-2: eu-west-2a # London
+                us-west-2: us-west-2a # Oregon
+                us-east-1: us-east-1a # Virginia
+                # == import: ps-z-1 / end ==
+          policy:
+            fromFieldPath: Required
+
+        # Additional Data
+        - fromFieldPath: spec.id
+          toFieldPath: spec.forProvider.tags[1].value
+        - fromFieldPath: spec.id
+          toFieldPath: spec.forProvider.tags[2].value
+          transforms:
+            - type: string
+              string:
+                fmt: "%s-private-subnet-1"
+    - name: private-subnet-2
+      base:
+        apiVersion: ec2.aws.crossplane.io/v1beta1
+        kind: Subnet
+        metadata:
+          labels:
+            access: private
+        spec:
+          forProvider:
+            # cidrBlock: TO BE PROVIDED BY PATCH BELOW
+            vpcIdSelector:
+              matchControllerRef: true
+            # availabilityZone: us-west-2b
+            tags:
+              - key: Managed-by
+                value: Crossplane
+              - key: CrossplaneID
+                value: unknown # To be overridden
+              - key: Name
+                value: unknown # To be overridden
+              - key: kubernetes.io/role/internal-elb
+                value: "1"
+      patches:
+        - fromFieldPath: spec.id
+          toFieldPath: metadata.labels[networks.aws.crossplane.upsider.dev/network-id]
+        - type: PatchSet
+          patchSetName: preventDeletion
+
+        # If `useExistingNetwork` is specified, use the provided ID.
+        - fromFieldPath: spec.useExistingNetwork.privateSubnet-2.subnetID
+          toFieldPath: metadata.annotations[crossplane.io/external-name]
+
+        - fromFieldPath: spec.providerConfigRef
+          toFieldPath: spec.providerConfigRef.name
+        - fromFieldPath: spec.cidrInput.privateSubnetCIDR-2
+          toFieldPath: spec.forProvider.cidrBlock
+        - fromFieldPath: spec.region
+          toFieldPath: spec.forProvider.region
+        - fromFieldPath: spec.region
+          toFieldPath: spec.forProvider.availabilityZone
+          transforms:
+            - type: map
+              map:
+                ap-northeast-1: ap-northeast-1c # Tokyo
+                eu-west-2: eu-west-2b # London
+                us-west-2: us-west-2b # Oregon
+          policy:
+            fromFieldPath: Required
+        - fromFieldPath: spec.region
+          toFieldPath: metadata.labels.zone
+          transforms:
+            - type: map
+              map:
+                ap-northeast-1: ap-northeast-1c # Tokyo
+                eu-west-2: eu-west-2b # London
+                us-west-2: us-west-2b # Oregon
+          policy:
+            fromFieldPath: Required
+
+        # Additional Data
+        - fromFieldPath: spec.id
+          toFieldPath: spec.forProvider.tags[1].value
+        - fromFieldPath: spec.id
+          toFieldPath: spec.forProvider.tags[2].value
+          transforms:
+            - type: string
+              string:
+                fmt: "%s-private-subnet-2"
+    - name: private-subnet-3
+      base:
+        apiVersion: ec2.aws.crossplane.io/v1beta1
+        kind: Subnet
+        metadata:
+          labels:
+            access: private
+        spec:
+          forProvider:
+            # cidrBlock: TO BE PROVIDED BY PATCH BELOW
+            vpcIdSelector:
+              matchControllerRef: true
+            # availabilityZone: us-west-2b
+            tags:
+              - key: Managed-by
+                value: Crossplane
+              - key: CrossplaneID
+                value: unknown # To be overridden
+              - key: Name
+                value: unknown # To be overridden
+              - key: kubernetes.io/role/internal-elb
+                value: "1"
+      patches:
+        - fromFieldPath: spec.id
+          toFieldPath: metadata.labels[networks.aws.crossplane.upsider.dev/network-id]
+        - type: PatchSet
+          patchSetName: preventDeletion
+
+        # If `useExistingNetwork` is specified, use the provided ID.
+        - fromFieldPath: spec.useExistingNetwork.privateSubnet-3.subnetID
+          toFieldPath: metadata.annotations[crossplane.io/external-name]
+
+        - fromFieldPath: spec.providerConfigRef
+          toFieldPath: spec.providerConfigRef.name
+        - fromFieldPath: spec.cidrInput.privateSubnetCIDR-3
+          toFieldPath: spec.forProvider.cidrBlock
+        - fromFieldPath: spec.region
+          toFieldPath: spec.forProvider.region
+        - fromFieldPath: spec.region
+          toFieldPath: spec.forProvider.availabilityZone
+          transforms:
+            - type: map
+              map:
+                ap-northeast-1: ap-northeast-1d # Tokyo
+                eu-west-2: eu-west-2c # London
+                us-west-2: us-west-2c # Oregon
+          policy:
+            fromFieldPath: Required
+        - fromFieldPath: spec.region
+          toFieldPath: metadata.labels.zone
+          transforms:
+            - type: map
+              map:
+                ap-northeast-1: ap-northeast-1d # Tokyo
+                eu-west-2: eu-west-2c # London
+                us-west-2: us-west-2c # Oregon
+          policy:
+            fromFieldPath: Required
+
+        # Additional Data
+        - fromFieldPath: spec.id
+          toFieldPath: spec.forProvider.tags[1].value
+        - fromFieldPath: spec.id
+          toFieldPath: spec.forProvider.tags[2].value
+          transforms:
+            - type: string
+              string:
+                fmt: "%s-private-subnet-3"
+    - name: eip-1
+      base:
+        apiVersion: ec2.aws.crossplane.io/v1beta1
+        kind: Address
+        metadata:
+          labels:
+            crossplane.upsider.dev/resource: eip-1
+        spec:
+          forProvider:
+            tags:
+              - key: Managed-by
+                value: Crossplane
+              - key: CrossplaneID
+                value: unknown # To be overridden
+              - key: Name
+                value: unknown # To be overridden
+      patches:
+        - fromFieldPath: spec.id
+          toFieldPath: metadata.labels[networks.aws.crossplane.upsider.dev/network-id]
+        - type: PatchSet
+          patchSetName: preventDeletion
+
+        # If `useExistingNetwork` is specified, use the provided ID.
+        - fromFieldPath: spec.useExistingNetwork.privateSubnet-1.eipID
+          toFieldPath: metadata.annotations[crossplane.io/external-name]
+
+        - fromFieldPath: spec.providerConfigRef
+          toFieldPath: spec.providerConfigRef.name
+        - fromFieldPath: spec.region
+          toFieldPath: spec.forProvider.region
+
+        # Additional Data
+        - fromFieldPath: spec.id
+          toFieldPath: spec.forProvider.tags[1].value
+        - fromFieldPath: spec.id
+          toFieldPath: spec.forProvider.tags[2].value
+          transforms:
+            - type: string
+              string:
+                fmt: "%s-elastic-ip-1"
+    - name: eip-2
+      base:
+        apiVersion: ec2.aws.crossplane.io/v1beta1
+        kind: Address
+        metadata:
+          labels:
+            crossplane.upsider.dev/resource: eip-2
+        spec:
+          forProvider:
+            tags:
+              - key: Managed-by
+                value: Crossplane
+              - key: CrossplaneID
+                value: unknown # To be overridden
+              - key: Name
+                value: unknown # To be overridden
+      patches:
+        - fromFieldPath: spec.id
+          toFieldPath: metadata.labels[networks.aws.crossplane.upsider.dev/network-id]
+        - type: PatchSet
+          patchSetName: preventDeletion
+
+        # If `useExistingNetwork` is specified, use the provided ID.
+        - fromFieldPath: spec.useExistingNetwork.privateSubnet-2.eipID
+          toFieldPath: metadata.annotations[crossplane.io/external-name]
+
+        - fromFieldPath: spec.providerConfigRef
+          toFieldPath: spec.providerConfigRef.name
+        - fromFieldPath: spec.region
+          toFieldPath: spec.forProvider.region
+
+        # Additional Data
+        - fromFieldPath: spec.id
+          toFieldPath: spec.forProvider.tags[1].value
+        - fromFieldPath: spec.id
+          toFieldPath: spec.forProvider.tags[2].value
+          transforms:
+            - type: string
+              string:
+                fmt: "%s-elastic-ip-2"
+    - name: eip-3
+      base:
+        apiVersion: ec2.aws.crossplane.io/v1beta1
+        kind: Address
+        metadata:
+          labels:
+            crossplane.upsider.dev/resource: eip-3
+        spec:
+          forProvider:
+            tags:
+              - key: Managed-by
+                value: Crossplane
+              - key: CrossplaneID
+                value: unknown # To be overridden
+              - key: Name
+                value: unknown # To be overridden
+      patches:
+        - fromFieldPath: spec.id
+          toFieldPath: metadata.labels[networks.aws.crossplane.upsider.dev/network-id]
+        - type: PatchSet
+          patchSetName: preventDeletion
+
+        # If `useExistingNetwork` is specified, use the provided ID.
+        - fromFieldPath: spec.useExistingNetwork.privateSubnet-3.eipID
+          toFieldPath: metadata.annotations[crossplane.io/external-name]
+
+        - fromFieldPath: spec.providerConfigRef
+          toFieldPath: spec.providerConfigRef.name
+        - fromFieldPath: spec.region
+          toFieldPath: spec.forProvider.region
+
+        # Additional Data
+        - fromFieldPath: spec.id
+          toFieldPath: spec.forProvider.tags[1].value
+        - fromFieldPath: spec.id
+          toFieldPath: spec.forProvider.tags[2].value
+          transforms:
+            - type: string
+              string:
+                fmt: "%s-elastic-ip-3"
+    - name: nat-gateway-1
+      base:
+        apiVersion: ec2.aws.crossplane.io/v1beta1
+        kind: NATGateway
+        metadata:
+          labels:
+            crossplane.upsider.dev/resource: nat-gateway-1
+        spec:
+          forProvider:
+            allocationIdSelector:
+              matchControllerRef: true
+              matchLabels:
+                crossplane.upsider.dev/resource: eip-1
+            subnetIdSelector:
+              matchControllerRef: true
+              matchLabels:
+                access: private
+            tags:
+              - key: Managed-by
+                value: Crossplane
+              - key: CrossplaneID
+                value: unknown # To be overridden
+              - key: Name
+                value: unknown # To be overridden
+      patches:
+        - fromFieldPath: spec.id
+          toFieldPath: metadata.labels[networks.aws.crossplane.upsider.dev/network-id]
+        - type: PatchSet
+          patchSetName: preventDeletion
+
+        # If `useExistingNetwork` is specified, use the provided ID.
+        - fromFieldPath: spec.useExistingNetwork.privateSubnet-1.natGatewayID
+          toFieldPath: metadata.annotations[crossplane.io/external-name]
+
+        - fromFieldPath: spec.providerConfigRef
+          toFieldPath: spec.providerConfigRef.name
+        - fromFieldPath: spec.region
+          toFieldPath: spec.forProvider.region
+
+        # Additional Data
+        - fromFieldPath: spec.id
+          toFieldPath: spec.forProvider.tags[1].value
+        - fromFieldPath: spec.id
+          toFieldPath: spec.forProvider.tags[2].value
+          transforms:
+            - type: string
+              string:
+                fmt: "%s-nat-gateway-1"
+    - name: nat-gateway-2
+      base:
+        apiVersion: ec2.aws.crossplane.io/v1beta1
+        kind: NATGateway
+        metadata:
+          labels:
+            crossplane.upsider.dev/resource: nat-gateway-2
+        spec:
+          forProvider:
+            allocationIdSelector:
+              matchControllerRef: true
+              matchLabels:
+                crossplane.upsider.dev/resource: eip-2
+            subnetIdSelector:
+              matchControllerRef: true
+              matchLabels:
+                access: private
+            tags:
+              - key: Managed-by
+                value: Crossplane
+              - key: CrossplaneID
+                value: unknown # To be overridden
+              - key: Name
+                value: unknown # To be overridden
+      patches:
+        - fromFieldPath: spec.id
+          toFieldPath: metadata.labels[networks.aws.crossplane.upsider.dev/network-id]
+        - type: PatchSet
+          patchSetName: preventDeletion
+
+        # If `useExistingNetwork` is specified, use the provided ID.
+        - fromFieldPath: spec.useExistingNetwork.privateSubnet-2.natGatewayID
+          toFieldPath: metadata.annotations[crossplane.io/external-name]
+
+        - fromFieldPath: spec.providerConfigRef
+          toFieldPath: spec.providerConfigRef.name
+        - fromFieldPath: spec.region
+          toFieldPath: spec.forProvider.region
+
+        # Additional Data
+        - fromFieldPath: spec.id
+          toFieldPath: spec.forProvider.tags[1].value
+        - fromFieldPath: spec.id
+          toFieldPath: spec.forProvider.tags[2].value
+          transforms:
+            - type: string
+              string:
+                fmt: "%s-nat-gateway-2"
+    - name: nat-gateway-3
+      base:
+        apiVersion: ec2.aws.crossplane.io/v1beta1
+        kind: NATGateway
+        metadata:
+          labels:
+            crossplane.upsider.dev/resource: nat-gateway-3
+        spec:
+          forProvider:
+            allocationIdSelector:
+              matchControllerRef: true
+              matchLabels:
+                crossplane.upsider.dev/resource: eip-3
+            subnetIdSelector:
+              matchControllerRef: true
+              matchLabels:
+                access: private
+            tags:
+              - key: Managed-by
+                value: Crossplane
+              - key: CrossplaneID
+                value: unknown # To be overridden
+              - key: Name
+                value: unknown # To be overridden
+      patches:
+        - fromFieldPath: spec.id
+          toFieldPath: metadata.labels[networks.aws.crossplane.upsider.dev/network-id]
+        - type: PatchSet
+          patchSetName: preventDeletion
+
+        # If `useExistingNetwork` is specified, use the provided ID.
+        - fromFieldPath: spec.useExistingNetwork.privateSubnet-3.natGatewayID
+          toFieldPath: metadata.annotations[crossplane.io/external-name]
+
+        - fromFieldPath: spec.providerConfigRef
+          toFieldPath: spec.providerConfigRef.name
+        - fromFieldPath: spec.region
+          toFieldPath: spec.forProvider.region
+
+        # Additional Data
+        - fromFieldPath: spec.id
+          toFieldPath: spec.forProvider.tags[1].value
+        - fromFieldPath: spec.id
+          toFieldPath: spec.forProvider.tags[2].value
+          transforms:
+            - type: string
+              string:
+                fmt: "%s-nat-gateway-3"
+    - name: route-table-private-1
+      base:
+        apiVersion: ec2.aws.crossplane.io/v1beta1
+        kind: RouteTable
+        spec:
+          forProvider:
+            vpcIdSelector:
+              matchControllerRef: true
+            routes:
+              - destinationCidrBlock: 0.0.0.0/0
+                natGatewayIdSelector:
+                  matchControllerRef: true
+                  matchLabels:
+                    crossplane.upsider.dev/resource: nat-gateway-1
+            associations:
+              - subnetIdSelector:
+                  matchControllerRef: true
+                  matchLabels:
+                    access: private
+            tags:
+              - key: Name
+                value: unknown # To be overridden
+      patches:
+        - fromFieldPath: spec.id
+          toFieldPath: metadata.labels[networks.aws.crossplane.upsider.dev/network-id]
+        - type: PatchSet
+          patchSetName: preventDeletion
+
+        # If `useExistingNetwork` is specified, use the provided ID.
+        - fromFieldPath: spec.useExistingNetwork.privateSubnet-1.routeTableID
+          toFieldPath: metadata.annotations[crossplane.io/external-name]
+
+        - fromFieldPath: spec.providerConfigRef
+          toFieldPath: spec.providerConfigRef.name
+        - fromFieldPath: spec.region
+          toFieldPath: spec.forProvider.region
+        - fromFieldPath: spec.region
+          toFieldPath: spec.forProvider.associations[0].subnetIdSelector.matchLabels.zone
+          transforms:
+            - type: map
+              map:
+                # == import: rtprv-1 / begin from: ../../_templates/region-to-zone-mapping.yaml#[zone-1] indent: align ==
+                ap-northeast-1: ap-northeast-1a # Tokyo
+                ap-northeast-3: ap-northeast-3a # Osaka
+                eu-west-2: eu-west-2a # London
+                us-west-2: us-west-2a # Oregon
+                us-east-1: us-east-1a # Virginia
+                # == import: rtprv-1 / end ==
+
+        # Additional Data
+        - fromFieldPath: spec.id
+          toFieldPath: spec.forProvider.tags[0].value
+          transforms:
+            - type: string
+              string:
+                fmt: "%s-private-route-table-1"
+    - name: route-table-private-2
+      base:
+        apiVersion: ec2.aws.crossplane.io/v1beta1
+        kind: RouteTable
+        spec:
+          forProvider:
+            vpcIdSelector:
+              matchControllerRef: true
+            routes:
+              - destinationCidrBlock: 0.0.0.0/0
+                natGatewayIdSelector:
+                  matchControllerRef: true
+                  matchLabels:
+                    crossplane.upsider.dev/resource: nat-gateway-2
+            associations:
+              - subnetIdSelector:
+                  matchControllerRef: true
+                  matchLabels:
+                    access: private
+            tags:
+              - key: Name
+                value: unknown # To be overridden
+      patches:
+        - fromFieldPath: spec.id
+          toFieldPath: metadata.labels[networks.aws.crossplane.upsider.dev/network-id]
+        - type: PatchSet
+          patchSetName: preventDeletion
+
+        # If `useExistingNetwork` is specified, use the provided ID.
+        - fromFieldPath: spec.useExistingNetwork.privateSubnet-2.routeTableID
+          toFieldPath: metadata.annotations[crossplane.io/external-name]
+
+        - fromFieldPath: spec.providerConfigRef
+          toFieldPath: spec.providerConfigRef.name
+        - fromFieldPath: spec.region
+          toFieldPath: spec.forProvider.region
+        - fromFieldPath: spec.region
+          toFieldPath: spec.forProvider.associations[0].subnetIdSelector.matchLabels.zone
+          transforms:
+            - type: map
+              map:
+                # == import: rtprv-2 / begin from: ../../_templates/region-to-zone-mapping.yaml#[zone-2] indent: align ==
+                ap-northeast-1: ap-northeast-1c # Tokyo
+                ap-northeast-3: ap-northeast-3b # Osaka
+                eu-west-2: eu-west-2b # London
+                us-west-2: us-west-2b # Oregon
+                us-east-1: us-east-1b # Virginia
+                # == import: rtprv-2 / end ==
+
+        # Additional Data
+        - fromFieldPath: spec.id
+          toFieldPath: spec.forProvider.tags[0].value
+          transforms:
+            - type: string
+              string:
+                fmt: "%s-private-route-table-2"
+    - name: route-table-private-3
+      base:
+        apiVersion: ec2.aws.crossplane.io/v1beta1
+        kind: RouteTable
+        spec:
+          forProvider:
+            vpcIdSelector:
+              matchControllerRef: true
+            routes:
+              - destinationCidrBlock: 0.0.0.0/0
+                natGatewayIdSelector:
+                  matchControllerRef: true
+                  matchLabels:
+                    crossplane.upsider.dev/resource: nat-gateway-3
+            associations:
+              - subnetIdSelector:
+                  matchControllerRef: true
+                  matchLabels:
+                    access: private
+            tags:
+              - key: Name
+                value: unknown # To be overridden
+      patches:
+        - fromFieldPath: spec.id
+          toFieldPath: metadata.labels[networks.aws.crossplane.upsider.dev/network-id]
+        - type: PatchSet
+          patchSetName: preventDeletion
+
+        # If `useExistingNetwork` is specified, use the provided ID.
+        - fromFieldPath: spec.useExistingNetwork.privateSubnet-3.routeTableID
+          toFieldPath: metadata.annotations[crossplane.io/external-name]
+
+        - fromFieldPath: spec.providerConfigRef
+          toFieldPath: spec.providerConfigRef.name
+        - fromFieldPath: spec.region
+          toFieldPath: spec.forProvider.region
+        - fromFieldPath: spec.region
+          toFieldPath: spec.forProvider.associations[0].subnetIdSelector.matchLabels.zone
+          transforms:
+            - type: map
+              map:
+                # == import: rtprv-3 / begin from: ../../_templates/region-to-zone-mapping.yaml#[zone-3] indent: align ==
+                ap-northeast-1: ap-northeast-1d # Tokyo
+                ap-northeast-3: ap-northeast-3c # Osaka
+                eu-west-2: eu-west-2c # London
+                us-west-2: us-west-2c # Oregon
+                us-east-1: us-east-1c # Virginia
+                # == import: rtprv-3 / end ==
+
+        # Additional Data
+        - fromFieldPath: spec.id
+          toFieldPath: spec.forProvider.tags[0].value
+          transforms:
+            - type: string
+              string:
+                fmt: "%s-private-route-table-3"
+
+    # TODO: Security Group setup needs to be further tweaked
+    - name: security-group
+      base:
+        apiVersion: ec2.aws.crossplane.io/v1beta1
+        kind: SecurityGroup
+        spec:
+          forProvider:
+            vpcIdSelector:
+              matchControllerRef: true
+            groupName: multik8s-cluster
+            description: Allow access to PostgreSQL # ?????
+            ingress:
+              - fromPort: 5432
+                toPort: 5432
+                ipProtocol: tcp
+                ipRanges:
+                  - cidrIp: 0.0.0.0/0
+                    description: Everywhere
+            tags:
+              - key: Managed-by
+                value: Crossplane
+              - key: CrossplaneID
+                value: unknown # To be overridden
+              - key: Name
+                value: unknown # To be overridden
+      patches:
+        - fromFieldPath: spec.id
+          toFieldPath: metadata.labels[networks.aws.crossplane.upsider.dev/network-id]
+        - type: PatchSet
+          patchSetName: preventDeletion
+
+        # If `useExistingNetwork` is specified, use the provided ID.
+        - fromFieldPath: spec.useExistingNetwork.securityGroupID
+          toFieldPath: metadata.annotations[crossplane.io/external-name]
+
+        - fromFieldPath: spec.providerConfigRef
+          toFieldPath: spec.providerConfigRef.name
+        - fromFieldPath: spec.region
+          toFieldPath: spec.forProvider.region
+
+        # Additional Data
+        - fromFieldPath: spec.id
+          toFieldPath: spec.forProvider.tags[1].value
+        - fromFieldPath: spec.id
+          toFieldPath: spec.forProvider.tags[2].value

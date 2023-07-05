@@ -1,0 +1,7 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - control-plane-cluster-composition-aws.yaml
+  - control-plane-cluster-definition.yaml
+  - standard-cluster-composition.yaml
+  - standard-cluster-definition.yaml

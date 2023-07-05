@@ -1,0 +1,36 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositeResourceDefinition
+metadata:
+  name: xbucketusers.crossplane.upsider.dev
+spec:
+  group: crossplane.upsider.dev
+  claimNames:
+    kind: BucketUser
+    plural: bucketusers
+  names:
+    kind: XBucketUser
+    plural: xbucketusers
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                preventDeletion:
+                  type: boolean
+                  default: false
+                  description: When set to true, it prevents deleting the remote resources.
+                providerConfigRef:
+                  type: string
+                  description: ProviderConfig reference to be used.
+                bucketName:
+                  type: string
+                  description: Specifies accessible bucket name.
+          required:
+            - bucketName
+            - providerConfigRef

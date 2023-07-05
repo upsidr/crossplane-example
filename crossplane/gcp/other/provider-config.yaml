@@ -1,0 +1,15 @@
+---
+apiVersion: gcp.upbound.io/v1beta1
+kind: ProviderConfig
+metadata:
+  name: default
+spec:
+  projectID: upsidr-nyx
+  # TODO(micnncim): Migrate to Workload Identity once https://github.com/crossplane/crossplane/pull/2880
+  # is released.
+  credentials:
+    source: Secret
+    secretRef:
+      name: gcp-creds
+      namespace: crossplane-system
+      key: creds
