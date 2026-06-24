@@ -1,3 +1,8 @@
+> [!WARNING]
+> This repository is archived and is no longer maintained.
+>
+> Issues and pull requests are not monitored.
+
 # crossplane-example
 
 This repository is to showcase how Crossplane could be used to create resources in multi-cloud environment.
